@@ -43,6 +43,15 @@ pub fn handle_hook() -> anyhow::Result<()> {
                     Ok(status) => {
                         // If buffer is modified AND is the current buffer, deny
                         if status.has_unsaved_changes && status.is_current {
+                            // Send message to Neovim
+                            let message = format!(
+                                "Claude Code blocked: File {} has unsaved changes",
+                                file_tool.file_path
+                            );
+                            if let Err(e) = action.send_message(&message) {
+                                eprintln!("Warning: Failed to send message to Neovim: {}", e);
+                            }
+
                             HookOutput::new().with_permission_decision(
                                 PermissionDecision::Deny,
                                 Some(format!(
