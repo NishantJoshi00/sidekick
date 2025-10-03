@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::env;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -36,8 +36,7 @@ fn handle_hook() -> anyhow::Result<()> {
     // Parse the hook
     let hook = hook::parse_hook(&input)?;
 
-    // For now, just output the parsed hook (normal behavior)
-    println!("{:?}", hook);
+    io::stdout().write_all(hook::HookOutput::new().to_json()?.as_bytes())?;
 
     Ok(())
 }
