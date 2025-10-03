@@ -1,3 +1,8 @@
+//! Neovim integration for performing editor actions via RPC.
+//!
+//! This module provides the `NeovimAction` implementation that connects to a running
+//! Neovim instance via Unix socket to check buffer status, refresh buffers, and send messages.
+
 use crate::action::{Action, BufferStatus};
 use anyhow::{Context, Result};
 use neovim_lib::{neovim_api::Buffer, Neovim, NeovimApi, Session};
@@ -141,8 +146,22 @@ impl Action for NeovimAction {
         Ok(())
     }
 
-    fn delete_buffer(&self, _file_path: &str) -> Result<()> {
-        // TODO: Implement neovim RPC call to delete buffer
-        todo!("Implement delete_buffer for Neovim")
+    fn delete_buffer(&self, file_path: &str) -> Result<()> {
+        let mut nvim = self.connect()?;
+
+        // Find the buffer
+        let buffer = self.find_buffer(&mut nvim, file_path)?;
+
+        // Get buffer number
+        let buf_number = buffer
+            .get_number(&mut nvim)
+            .context("Failed to get buffer number")?;
+
+        // Delete the buffer using bdelete command
+        let cmd = format!("bdelete {}", buf_number);
+        nvim.command(&cmd)
+            .context("Failed to delete buffer")?;
+
+        Ok(())
     }
 }

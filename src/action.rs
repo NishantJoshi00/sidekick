@@ -1,3 +1,8 @@
+//! Editor action abstractions for interacting with text editors.
+//!
+//! This module defines the `Action` trait for performing operations on editor buffers,
+//! such as checking buffer status, refreshing content, and sending messages.
+
 pub mod neovim;
 
 /// Buffer status information

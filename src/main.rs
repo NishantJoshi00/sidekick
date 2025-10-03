@@ -1,7 +1,6 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::env;
-use std::io::{self, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -31,6 +30,7 @@ enum Commands {
 }
 
 
+/// Handle the 'neovim' command
 fn handle_neovim(args: Vec<String>) -> anyhow::Result<()> {
     // Get absolute path of current working directory
     let cwd = env::current_dir().context("Failed to get current working directory")?;

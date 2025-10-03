@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use crate::action::{neovim::NeovimAction, Action};
-use crate::hook;
+use crate::hook::{self, HookOutput, PermissionDecision, Tool};
 
 pub fn handle_hook() -> anyhow::Result<()> {
     // Read hook input from stdin
@@ -12,7 +12,7 @@ pub fn handle_hook() -> anyhow::Result<()> {
     io::stdin().read_to_string(&mut input)?;
 
     // Parse the hook
-    let _hook = hook::parse_hook(&input)?;
+    let hook = hook::parse_hook(&input)?;
 
     // Get absolute path of current working directory
     let cwd = env::current_dir().context("Failed to get current working directory")?;
@@ -27,19 +27,53 @@ pub fn handle_hook() -> anyhow::Result<()> {
     // Create socket path
     let socket_path = PathBuf::from(format!("/tmp/{}.sock", hash_hex));
 
-    // Check if socket exists
-    if socket_path.exists() {
-        // Create Neovim client and send message
-        let nvim_action = NeovimAction::new(socket_path);
+    // Try to initialize Neovim action manager if socket exists
+    let nvim_action = if socket_path.exists() {
+        Some(NeovimAction::new(socket_path))
+    } else {
+        None
+    };
 
-        // Try to send message, but don't fail the hook if it fails
-        if let Err(e) = nvim_action.send_message("Hi! from Claude") {
-            eprintln!("Warning: Failed to send message to Neovim: {}", e);
+    // Check if this is a file modification tool (Edit, Write, MultiEdit)
+    let output = match &hook.tool {
+        Tool::Edit(file_tool) | Tool::Write(file_tool) | Tool::MultiEdit(file_tool) => {
+            // If we have a neovim connection, check buffer status
+            if let Some(action) = &nvim_action {
+                match action.buffer_status(&file_tool.file_path) {
+                    Ok(status) => {
+                        // If buffer is modified AND is the current buffer, deny
+                        if status.has_unsaved_changes && status.is_current {
+                            HookOutput::new().with_permission_decision(
+                                PermissionDecision::Deny,
+                                Some(format!(
+                                    "File {} is currently being edited with unsaved changes",
+                                    file_tool.file_path
+                                )),
+                            )
+                        } else {
+                            // Otherwise, try to refresh the buffer and allow
+                            if let Err(e) = action.refresh_buffer(&file_tool.file_path) {
+                                eprintln!("Warning: Failed to refresh buffer: {}", e);
+                            }
+                            HookOutput::new()
+                        }
+                    }
+                    Err(_) => {
+                        // Buffer doesn't exist in neovim or some error occurred, allow the action
+                        HookOutput::new()
+                    }
+                }
+            } else {
+                // No neovim connection, allow the action
+                HookOutput::new()
+            }
         }
-    }
+        // For all other tools, allow them
+        _ => HookOutput::new(),
+    };
 
-    // Return normal hook output
-    io::stdout().write_all(hook::HookOutput::new().to_json()?.as_bytes())?;
+    // Return hook output
+    io::stdout().write_all(output.to_json()?.as_bytes())?;
 
     Ok(())
 }
