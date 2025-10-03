@@ -6,6 +6,8 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+mod action;
+mod handler;
 mod hook;
 
 #[derive(Parser)]
@@ -28,18 +30,6 @@ enum Commands {
     },
 }
 
-fn handle_hook() -> anyhow::Result<()> {
-    // Read hook input from stdin
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input)?;
-
-    // Parse the hook
-    let hook = hook::parse_hook(&input)?;
-
-    io::stdout().write_all(hook::HookOutput::new().to_json()?.as_bytes())?;
-
-    Ok(())
-}
 
 fn handle_neovim(args: Vec<String>) -> anyhow::Result<()> {
     // Get absolute path of current working directory
@@ -73,7 +63,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Hook => handle_hook()?,
+        Commands::Hook => handler::handle_hook()?,
         Commands::Neovim { args } => handle_neovim(args)?,
     }
 
