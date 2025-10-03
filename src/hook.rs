@@ -94,24 +94,28 @@ impl HookOutput {
     }
 
     /// Set continue execution flag
+    #[allow(dead_code)]
     pub fn with_continue(mut self, continue_execution: bool) -> Self {
         self.continue_execution = Some(continue_execution);
         self
     }
 
     /// Set stop reason
+    #[allow(dead_code)]
     pub fn with_stop_reason(mut self, reason: impl Into<String>) -> Self {
         self.stop_reason = Some(reason.into());
         self
     }
 
     /// Set suppress output flag
+    #[allow(dead_code)]
     pub fn with_suppress_output(mut self, suppress: bool) -> Self {
         self.suppress_output = Some(suppress);
         self
     }
 
     /// Set system message
+    #[allow(dead_code)]
     pub fn with_system_message(mut self, message: impl Into<String>) -> Self {
         self.system_message = Some(message.into());
         self
@@ -137,6 +141,7 @@ impl HookOutput {
     }
 
     /// Convert to pretty JSON string
+    #[allow(dead_code)]
     pub fn to_json_pretty(&self) -> anyhow::Result<String> {
         serde_json::to_string_pretty(self).context("Failed to serialize HookOutput")
     }

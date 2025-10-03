@@ -22,7 +22,4 @@ pub trait Action {
 
     /// Send a message to the editor
     fn send_message(&self, message: &str) -> anyhow::Result<()>;
-
-    /// Delete/close a buffer
-    fn delete_buffer(&self, file_path: &str) -> anyhow::Result<()>;
 }

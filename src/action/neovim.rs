@@ -5,7 +5,7 @@
 
 use crate::action::{Action, BufferStatus};
 use anyhow::{Context, Result};
-use neovim_lib::{neovim_api::Buffer, Neovim, NeovimApi, Session};
+use neovim_lib::{Neovim, NeovimApi, Session, neovim_api::Buffer};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -37,9 +37,7 @@ impl NeovimAction {
             .unwrap_or_else(|_| PathBuf::from(file_path));
 
         for buffer in buffers {
-            let buf_name = buffer
-                .get_name(nvim)
-                .context("Failed to get buffer name")?;
+            let buf_name = buffer.get_name(nvim).context("Failed to get buffer name")?;
 
             if buf_name.is_empty() {
                 continue;
@@ -119,12 +117,30 @@ impl Action for NeovimAction {
             .get_number(&mut nvim)
             .context("Failed to get buffer number")?;
 
-        // Use Lua to call edit! in the context of the buffer without switching windows
+        // Use Lua to refresh buffer while preserving cursor positions in all windows
         let lua_code = format!(
             r#"
-            vim.api.nvim_buf_call({}, function()
+            local buf = {}
+            local cursor_positions = {{}}
+
+            -- Save cursor positions for all windows displaying this buffer
+            for _, win in ipairs(vim.api.nvim_list_wins()) do
+                if vim.api.nvim_win_get_buf(win) == buf then
+                    cursor_positions[win] = vim.api.nvim_win_get_cursor(win)
+                end
+            end
+
+            -- Refresh the buffer
+            vim.api.nvim_buf_call(buf, function()
                 vim.cmd('edit!')
             end)
+
+            -- Restore cursor positions
+            for win, pos in pairs(cursor_positions) do
+                if vim.api.nvim_win_is_valid(win) then
+                    vim.api.nvim_win_set_cursor(win, pos)
+                end
+            end
             "#,
             buf_number
         );
@@ -142,25 +158,6 @@ impl Action for NeovimAction {
         let cmd = format!("echo '{}'", message.replace('\'', "''"));
         nvim.command(&cmd)
             .context("Failed to send message to Neovim")?;
-
-        Ok(())
-    }
-
-    fn delete_buffer(&self, file_path: &str) -> Result<()> {
-        let mut nvim = self.connect()?;
-
-        // Find the buffer
-        let buffer = self.find_buffer(&mut nvim, file_path)?;
-
-        // Get buffer number
-        let buf_number = buffer
-            .get_number(&mut nvim)
-            .context("Failed to get buffer number")?;
-
-        // Delete the buffer using bdelete command
-        let cmd = format!("bdelete {}", buf_number);
-        nvim.command(&cmd)
-            .context("Failed to delete buffer")?;
 
         Ok(())
     }

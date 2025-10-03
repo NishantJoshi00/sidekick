@@ -3,7 +3,7 @@ use std::env;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use crate::action::{neovim::NeovimAction, Action};
+use crate::action::{Action, neovim::NeovimAction};
 use crate::hook::{self, HookOutput, PermissionDecision, Tool};
 
 pub fn handle_hook() -> anyhow::Result<()> {

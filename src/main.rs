@@ -29,7 +29,6 @@ enum Commands {
     },
 }
 
-
 /// Handle the 'neovim' command
 fn handle_neovim(args: Vec<String>) -> anyhow::Result<()> {
     // Get absolute path of current working directory
