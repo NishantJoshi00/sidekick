@@ -1,12 +1,19 @@
 use anyhow::Context;
 
-/// PreToolUse hook input structure
+/// Hook event type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HookEvent {
+    PreToolUse,
+    PostToolUse,
+}
+
+/// Hook input structure
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct PreToolUseHook {
+pub struct Hook {
     pub session_id: String,
     pub transcript_path: String,
     pub cwd: String,
-    pub hook_event_name: String,
+    pub hook_event_name: HookEvent,
     #[serde(flatten)]
     pub tool: Tool,
 }
@@ -41,8 +48,8 @@ pub struct BashToolInput {
     pub description: String,
 }
 
-pub fn parse_hook(input: &str) -> anyhow::Result<PreToolUseHook> {
-    serde_json::from_str(input).context("Invalid JSON for PreToolUseHook")
+pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
+    serde_json::from_str(input).context("Invalid JSON for Hook")
 }
 
 /// Permission decision for PreToolUse hooks
@@ -54,15 +61,19 @@ pub enum PermissionDecision {
     Ask,
 }
 
-/// Hook-specific output for PreToolUse
+/// Hook-specific output
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreToolUseSpecificOutput {
+pub struct HookSpecificOutput {
     pub hook_event_name: String,
+    // PreToolUse fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_decision: Option<PermissionDecision>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_decision_reason: Option<String>,
+    // PostToolUse fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_context: Option<String>,
 }
 
 /// Hook output response
@@ -77,8 +88,13 @@ pub struct HookOutput {
     pub suppress_output: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_message: Option<String>,
+    // PostToolUse fields
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hook_specific_output: Option<PreToolUseSpecificOutput>,
+    pub decision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_specific_output: Option<HookSpecificOutput>,
 }
 
 impl HookOutput {
@@ -89,6 +105,8 @@ impl HookOutput {
             stop_reason: None,
             suppress_output: None,
             system_message: None,
+            decision: None,
+            reason: None,
             hook_specific_output: None,
         }
     }
@@ -127,10 +145,11 @@ impl HookOutput {
         decision: PermissionDecision,
         reason: Option<String>,
     ) -> Self {
-        self.hook_specific_output = Some(PreToolUseSpecificOutput {
+        self.hook_specific_output = Some(HookSpecificOutput {
             hook_event_name: "PreToolUse".to_string(),
             permission_decision: Some(decision),
             permission_decision_reason: reason,
+            additional_context: None,
         });
         self
     }

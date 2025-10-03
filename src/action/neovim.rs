@@ -90,38 +90,18 @@ impl Action for NeovimAction {
         // Find the buffer
         let buffer = self.find_buffer(&mut nvim, file_path)?;
 
-        // Get current buffer
-        let current_buf = nvim
-            .get_current_buf()
-            .context("Failed to get current buffer")?;
-
-        let is_current = buffer == current_buf;
-
-        // Check if buffer has unsaved changes
-        let modified = buffer
-            .get_option(&mut nvim, "modified")
-            .context("Failed to get modified option")?;
-
-        let has_unsaved_changes = modified.as_bool().unwrap_or(false);
-
-        // Don't refresh if buffer has unsaved changes AND is the current buffer
-        if has_unsaved_changes && is_current {
-            anyhow::bail!(
-                "Cannot refresh buffer with unsaved changes while it is in view: {}",
-                file_path
-            );
-        }
-
         // Get buffer number for nvim_buf_call
         let buf_number = buffer
             .get_number(&mut nvim)
             .context("Failed to get buffer number")?;
 
         // Use Lua to refresh buffer while preserving cursor positions in all windows
+        // This will reload the file from disk, updating the buffer content
         let lua_code = format!(
             r#"
             local buf = {}
             local cursor_positions = {{}}
+            local is_current_buf = vim.api.nvim_get_current_buf() == buf
 
             -- Save cursor positions for all windows displaying this buffer
             for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -130,16 +110,22 @@ impl Action for NeovimAction {
                 end
             end
 
-            -- Refresh the buffer
+            -- Refresh the buffer (checktime triggers file change detection)
             vim.api.nvim_buf_call(buf, function()
-                vim.cmd('edit!')
+                vim.cmd('checktime')
+                vim.cmd('edit')
             end)
 
             -- Restore cursor positions
             for win, pos in pairs(cursor_positions) do
                 if vim.api.nvim_win_is_valid(win) then
-                    vim.api.nvim_win_set_cursor(win, pos)
+                    pcall(vim.api.nvim_win_set_cursor, win, pos)
                 end
+            end
+
+            -- Force redraw only if this is the current buffer
+            if is_current_buf then
+                vim.cmd('redraw')
             end
             "#,
             buf_number

@@ -2,16 +2,16 @@
 
 A Rust CLI tool that bridges Claude Code and Neovim, preventing conflicts when AI-assisted coding meets human editing.
 
-## What It Does
+Most people try to integrate Claude Code deeply into their editor. This project takes the opposite approach: unite Claude Code with your editor **without** tightly coupling them. You stay in control of your editing environment, and Claude Code acts as what it should be—a sidekick, not the pilot.
 
-Sidekick provides two key features:
+No editor plugins. No deep integrations. Just a clean boundary that respects both tools for what they do best.
+
+## What It Does
 
 1. **Neovim Protection**: Prevents Claude Code from modifying files you're actively editing in Neovim with unsaved changes
 2. **Smart Neovim Launcher**: Opens Neovim instances with per-directory socket paths for seamless integration
 
-## Why?
-
-When using Claude Code to edit files while working in Neovim, you risk losing unsaved work if Claude modifies a file you're currently editing. Sidekick acts as a safety layer, blocking Claude Code's file modifications when they would overwrite your unsaved changes.
+Sidekick acts as a safety layer, blocking Claude Code's file modifications when they would overwrite your unsaved work.
 
 ## Installation
 
@@ -41,25 +41,44 @@ sidekick neovim <file>
 
 This launches Neovim with a Unix socket at `/tmp/<hash>.sock`, where the hash is deterministically computed from your current working directory.
 
-### Configure Claude Code Hook
+### Configure Claude Code Hooks
 
-Add to your Claude Code configuration:
+Add to your Claude Code configuration (`~/.claude/settings.json` or `.claude/settings.json`):
 
 ```json
 {
   "hooks": {
-    "PreToolUse": {
-      "command": "sidekick hook"
-    }
+    "PreToolUse": [
+      {
+        "matcher": "MultiEdit|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sidekick hook"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "MultiEdit|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sidekick hook"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
 Now when Claude Code attempts to edit a file:
-- ✅ **Allowed**: File not open in Neovim, or open in background buffer
-- ✅ **Allowed**: File open but no unsaved changes
-- ❌ **Blocked**: File is in current buffer with unsaved changes
-- 🔄 **Auto-refresh**: Neovim buffers are automatically reloaded after Claude Code modifies files
+- **Allowed**: File not open in Neovim, or open in background buffer
+- **Allowed**: File open but no unsaved changes
+- **Blocked**: File is in current buffer with unsaved changes
+- **Auto-refresh**: Neovim buffers are automatically reloaded after Claude Code modifies files
 
 ## How It Works
 
@@ -99,10 +118,12 @@ claude "refactor main.rs to use async/await"
 
 ## Built with Love For
 
-**Neovim Community** 💚
+**Neovim Community**
+
 For creating the most extensible, keyboard-driven editor that makes coding feel like a superpower. Your commitment to backwards compatibility, clean architecture, and RPC-first design made this integration possible.
 
-**Claude Code Community** 🤖
+**Claude Code Community**
+
 For pushing the boundaries of AI-assisted development with a tool that actually understands context and respects developer workflows. The hook system is a brilliant design choice that enables tools like this to exist.
 
 This project exists because both communities care deeply about craft, extensibility, and putting developers first.
@@ -110,7 +131,3 @@ This project exists because both communities care deeply about craft, extensibil
 ## Contributing
 
 Issues and pull requests welcome! If you're using this with other editors (Emacs, VS Code with Neovim plugin, Helix), contributions to support them would be amazing.
-
-## License
-
-MIT
