@@ -15,13 +15,23 @@ Sidekick acts as a safety layer, blocking Claude Code's file modifications when 
 
 ## Installation
 
+### Method 1: Direct Install from Git (Recommended)
+
 ```bash
-cargo build --release
+cargo install --git https://github.com/NishantJoshi00/sidekick
 ```
 
-The binary will be available at `target/release/sidekick`.
+### Method 2: From Source
 
-### Quick Setup (Recommended)
+```bash
+git clone https://github.com/NishantJoshi00/sidekick
+cd sidekick
+cargo install --path .
+```
+
+## Setup
+
+### 1. Shell Alias (Recommended)
 
 Add this to your shell configuration (`~/.bashrc`, `~/.zshrc`, etc.):
 
@@ -31,17 +41,7 @@ alias nvim='sidekick neovim'
 
 Now every time you run `nvim`, you'll automatically get the Claude Code integration without thinking about it.
 
-## Usage
-
-### Launch Neovim with Integration
-
-```bash
-sidekick neovim <file>
-```
-
-This launches Neovim with a Unix socket at `/tmp/<hash>.sock`, where the hash is deterministically computed from your current working directory.
-
-### Configure Claude Code Hooks
+### 2. Configure Claude Code Hooks
 
 Add to your Claude Code configuration (`~/.claude/settings.json` or `.claude/settings.json`):
 
@@ -74,11 +74,21 @@ Add to your Claude Code configuration (`~/.claude/settings.json` or `.claude/set
 }
 ```
 
-Now when Claude Code attempts to edit a file:
+That's it! Now when Claude Code attempts to edit a file:
 - **Allowed**: File not open in Neovim, or open in background buffer
 - **Allowed**: File open but no unsaved changes
 - **Blocked**: File is in current buffer with unsaved changes
 - **Auto-refresh**: Neovim buffers are automatically reloaded after Claude Code modifies files
+
+## Usage
+
+### Launch Neovim with Integration
+
+```bash
+sidekick neovim <file>
+```
+
+This launches Neovim with a Unix socket at `/tmp/<hash>-<pid>.sock`, where the hash is deterministically computed from your current working directory.
 
 ## How It Works
 
