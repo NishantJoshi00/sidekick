@@ -15,6 +15,13 @@ Sidekick acts as a safety layer, blocking Claude Code's file modifications when 
 
 ## Installation
 
+> ### Prerequisites
+> 
+> If you don't have Rust installed, install it first:
+> ```bash
+> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+> ```
+
 ### Method 1: Direct Install from Git (Recommended)
 
 ```bash
