@@ -9,27 +9,27 @@ use neovim_lib::{Neovim, NeovimApi, Session, neovim_api::Buffer};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Neovim action implementation
+/// Neovim action implementation that supports multiple instances
 pub struct NeovimAction {
-    socket_path: PathBuf,
+    socket_paths: Vec<PathBuf>,
 }
 
 impl NeovimAction {
-    pub fn new(socket_path: PathBuf) -> Self {
-        Self { socket_path }
+    pub fn new(socket_paths: Vec<PathBuf>) -> Self {
+        Self { socket_paths }
     }
 
     /// Connect to Neovim via Unix socket and return Neovim client
-    fn connect(&self) -> Result<Neovim> {
-        let mut session = Session::new_unix_socket(&self.socket_path)
-            .context("Failed to connect to Neovim socket")?;
+    fn connect(socket_path: &PathBuf) -> Result<Neovim> {
+        let mut session =
+            Session::new_unix_socket(socket_path).context("Failed to connect to Neovim socket")?;
         session.set_timeout(Duration::from_secs(2));
         session.start_event_loop();
         Ok(Neovim::new(session))
     }
 
     /// Find buffer by file path
-    fn find_buffer(&self, nvim: &mut Neovim, file_path: &str) -> Result<Buffer> {
+    fn find_buffer(nvim: &mut Neovim, file_path: &str) -> Result<Buffer> {
         let buffers = nvim.list_bufs().context("Failed to list buffers")?;
 
         let target_path = PathBuf::from(file_path)
@@ -58,93 +58,138 @@ impl NeovimAction {
 
 impl Action for NeovimAction {
     fn buffer_status(&self, file_path: &str) -> Result<BufferStatus> {
-        let mut nvim = self.connect()?;
+        let mut any_is_current = false;
+        let mut any_has_unsaved_changes = false;
 
-        // Find the buffer
-        let buffer = self.find_buffer(&mut nvim, file_path)?;
+        // Check all Neovim instances
+        for socket_path in &self.socket_paths {
+            let Ok(mut nvim) = Self::connect(socket_path) else {
+                continue;
+            };
 
-        // Get current buffer
-        let current_buf = nvim
-            .get_current_buf()
-            .context("Failed to get current buffer")?;
+            // Find the buffer
+            let Ok(buffer) = Self::find_buffer(&mut nvim, file_path) else {
+                continue;
+            };
 
-        // Check if this is the current buffer
-        let is_current = buffer == current_buf;
+            // Get current buffer
+            let Ok(current_buf) = nvim.get_current_buf() else {
+                continue;
+            };
 
-        // Check if buffer has unsaved changes
-        let modified = buffer
-            .get_option(&mut nvim, "modified")
-            .context("Failed to get modified option")?;
+            // Check if this is the current buffer
+            let is_current = buffer == current_buf;
 
-        let has_unsaved_changes = modified.as_bool().unwrap_or(false);
+            // Check if buffer has unsaved changes
+            let Ok(modified) = buffer.get_option(&mut nvim, "modified") else {
+                continue;
+            };
+
+            let has_unsaved_changes = modified.as_bool().unwrap_or(false);
+
+            // Aggregate status across all instances
+            any_is_current = any_is_current || is_current;
+            any_has_unsaved_changes = any_has_unsaved_changes || has_unsaved_changes;
+
+            // Early exit if we found unsaved changes
+            if any_has_unsaved_changes {
+                break;
+            }
+        }
 
         Ok(BufferStatus {
-            is_current,
-            has_unsaved_changes,
+            is_current: any_is_current,
+            has_unsaved_changes: any_has_unsaved_changes,
         })
     }
 
     fn refresh_buffer(&self, file_path: &str) -> Result<()> {
-        let mut nvim = self.connect()?;
+        let mut any_success = false;
 
-        // Find the buffer
-        let buffer = self.find_buffer(&mut nvim, file_path)?;
+        // Refresh buffer in all Neovim instances that have it open
+        for socket_path in &self.socket_paths {
+            let Ok(mut nvim) = Self::connect(socket_path) else {
+                continue;
+            };
 
-        // Get buffer number for nvim_buf_call
-        let buf_number = buffer
-            .get_number(&mut nvim)
-            .context("Failed to get buffer number")?;
+            // Find the buffer
+            let Ok(buffer) = Self::find_buffer(&mut nvim, file_path) else {
+                continue;
+            };
 
-        // Use Lua to refresh buffer while preserving cursor positions in all windows
-        // This will reload the file from disk, updating the buffer content
-        let lua_code = format!(
-            r#"
-            local buf = {}
-            local cursor_positions = {{}}
-            local is_current_buf = vim.api.nvim_get_current_buf() == buf
+            // Get buffer number for nvim_buf_call
+            let Ok(buf_number) = buffer.get_number(&mut nvim) else {
+                continue;
+            };
 
-            -- Save cursor positions for all windows displaying this buffer
-            for _, win in ipairs(vim.api.nvim_list_wins()) do
-                if vim.api.nvim_win_get_buf(win) == buf then
-                    cursor_positions[win] = vim.api.nvim_win_get_cursor(win)
+            // Use Lua to refresh buffer while preserving cursor positions in all windows
+            // This will reload the file from disk, updating the buffer content
+            let lua_code = format!(
+                r#"
+                local buf = {}
+                local cursor_positions = {{}}
+                local is_current_buf = vim.api.nvim_get_current_buf() == buf
+
+                -- Save cursor positions for all windows displaying this buffer
+                for _, win in ipairs(vim.api.nvim_list_wins()) do
+                    if vim.api.nvim_win_get_buf(win) == buf then
+                        cursor_positions[win] = vim.api.nvim_win_get_cursor(win)
+                    end
                 end
-            end
 
-            -- Refresh the buffer (checktime triggers file change detection)
-            vim.api.nvim_buf_call(buf, function()
-                vim.cmd('checktime')
-                vim.cmd('edit')
-            end)
+                -- Refresh the buffer (checktime triggers file change detection)
+                vim.api.nvim_buf_call(buf, function()
+                    vim.cmd('checktime')
+                    vim.cmd('edit')
+                end)
 
-            -- Restore cursor positions
-            for win, pos in pairs(cursor_positions) do
-                if vim.api.nvim_win_is_valid(win) then
-                    pcall(vim.api.nvim_win_set_cursor, win, pos)
+                -- Restore cursor positions
+                for win, pos in pairs(cursor_positions) do
+                    if vim.api.nvim_win_is_valid(win) then
+                        pcall(vim.api.nvim_win_set_cursor, win, pos)
+                    end
                 end
-            end
 
-            -- Force redraw only if this is the current buffer
-            if is_current_buf then
-                vim.cmd('redraw')
-            end
-            "#,
-            buf_number
-        );
+                -- Force redraw only if this is the current buffer
+                if is_current_buf then
+                    vim.cmd('redraw')
+                end
+                "#,
+                buf_number
+            );
 
-        nvim.execute_lua(&lua_code, vec![])
-            .context("Failed to reload buffer")?;
+            if nvim.execute_lua(&lua_code, vec![]).is_ok() {
+                any_success = true;
+            }
+        }
 
-        Ok(())
+        if any_success {
+            Ok(())
+        } else {
+            anyhow::bail!("Failed to refresh buffer in any Neovim instance")
+        }
     }
 
     fn send_message(&self, message: &str) -> Result<()> {
-        let mut nvim = self.connect()?;
+        let mut any_success = false;
 
-        // Use echo command to display message to the user
-        let cmd = format!("echo '{}'", message.replace('\'', "''"));
-        nvim.command(&cmd)
-            .context("Failed to send message to Neovim")?;
+        // Send message to all Neovim instances
+        for socket_path in &self.socket_paths {
+            let Ok(mut nvim) = Self::connect(socket_path) else {
+                continue;
+            };
 
-        Ok(())
+            // Use echo command to display message to the user
+            let cmd = format!("echo '{}'", message.replace('\'', "''"));
+            if nvim.command(&cmd).is_ok() {
+                any_success = true;
+            }
+        }
+
+        if any_success {
+            Ok(())
+        } else {
+            anyhow::bail!("Failed to send message to any Neovim instance")
+        }
     }
 }

@@ -31,14 +31,14 @@ pub fn handle_hook() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Get Neovim action if socket exists
+/// Get Neovim action if any sockets exist
 fn get_neovim_action() -> anyhow::Result<Option<NeovimAction>> {
-    let socket_path = utils::compute_socket_path()?;
+    let socket_paths = utils::find_matching_sockets()?;
 
-    Ok(if socket_path.exists() {
-        Some(NeovimAction::new(socket_path))
-    } else {
+    Ok(if socket_paths.is_empty() {
         None
+    } else {
+        Some(NeovimAction::new(socket_paths))
     })
 }
 

@@ -29,7 +29,8 @@ enum Commands {
 
 /// Handle the 'neovim' command
 fn handle_neovim(args: Vec<String>) -> anyhow::Result<()> {
-    let socket_path = utils::compute_socket_path()?;
+    let pid = std::process::id();
+    let socket_path = utils::compute_socket_path_with_pid(pid)?;
 
     // Build neovim command with --listen flag
     let mut cmd = Command::new("nvim");

@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Sidekick is a Rust-based CLI tool that provides two main functionalities:
-1. **Claude Code Hook Handler**: Intercepts Claude Code tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes
-2. **Neovim Integration**: Launches Neovim instances with deterministic Unix socket paths based on the current working directory (using blake3 hashing)
+1. **Claude Code Hook Handler**: Intercepts Claude Code tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
+2. **Neovim Integration**: Launches Neovim instances with deterministic Unix socket paths based on the current working directory and process ID (using blake3 hashing)
 
 ## Architecture
 
@@ -14,14 +14,14 @@ Sidekick is a Rust-based CLI tool that provides two main functionalities:
 
 - **`main.rs`**: CLI entry point with two subcommands:
   - `hook`: Handles Claude Code PreToolUse hooks via stdin/stdout JSON protocol
-  - `neovim`: Launches Neovim with computed socket path based on CWD hash
+  - `neovim`: Launches Neovim with computed socket path based on CWD hash and PID
 
 - **`handler.rs`**: Hook processing logic that:
   - Parses PreToolUse hook JSON from stdin
-  - Connects to Neovim instance via Unix socket (if exists)
-  - Checks buffer status for file modification tools (Edit, Write, MultiEdit)
-  - Returns permission decision (Allow/Deny) based on whether the file has unsaved changes in the current buffer
-  - Automatically refreshes Neovim buffers after Claude Code modifies files
+  - Discovers and connects to all Neovim instances for the current directory via Unix sockets
+  - Checks buffer status across all instances for file modification tools (Edit, Write, MultiEdit)
+  - Returns permission decision (Allow/Deny) based on whether ANY instance has the file with unsaved changes in the current buffer
+  - Automatically refreshes Neovim buffers in ALL instances after Claude Code modifies files
 
 - **`hook.rs`**: Data structures for Claude Code hooks:
   - `PreToolUseHook`: Incoming hook payload with discriminated union for tool types
@@ -35,20 +35,35 @@ Sidekick is a Rust-based CLI tool that provides two main functionalities:
   - `send_message()`: Display message in editor
 
 - **`action/neovim.rs`**: Neovim RPC implementation:
-  - Connects via Unix socket using `neovim-lib`
+  - Supports connecting to multiple Neovim instances via Unix sockets
   - Uses Lua code execution for buffer operations to preserve cursor positions
   - Implements buffer finding by canonicalized file paths
+  - Aggregates status checks across all instances (denies if ANY has unsaved changes)
+  - Refreshes buffers in all instances that have the file open
+
+- **`utils.rs`**: Utility functions for socket path management:
+  - `compute_socket_path_with_pid()`: Generates socket path with PID suffix
+  - `find_matching_sockets()`: Discovers all socket paths for the current directory
 
 ### Key Design Patterns
 
-1. **Socket Path Computation**: Both `hook` and `neovim` commands compute the same socket path by hashing the canonicalized CWD with blake3, ensuring they connect to the same instance
+1. **Multi-Instance Socket Pattern**:
+   - `neovim` command creates socket with pattern: `/tmp/<blake3(cwd)>-<pid>.sock`
+   - `hook` command discovers all matching sockets using glob: `/tmp/<blake3(cwd)>-*.sock`
+   - PID-based naming enables multiple instances per directory
+   - Stale sockets are easily identified (process no longer running)
 
-2. **Buffer Protection**: Only denies modifications when:
-   - File has unsaved changes in Neovim
-   - File is in the current buffer (visible to user)
-   - Rationale: Prevents losing user work while allowing background file updates
+2. **Buffer Protection**: Denies modifications when:
+   - File has unsaved changes in ANY Neovim instance
+   - File is in the current buffer (visible to user) in ANY instance
+   - Rationale: Prevents losing user work across all instances while allowing background file updates
 
-3. **Graceful Degradation**: If Neovim socket doesn't exist, hooks allow all operations (no-op)
+3. **Multi-Instance Actions**:
+   - `buffer_status()`: Checks ALL instances, returns true if ANY has unsaved changes
+   - `refresh_buffer()`: Refreshes file in ALL instances that have it open
+   - `send_message()`: Sends message to ALL instances
+
+4. **Graceful Degradation**: If no Neovim sockets exist, hooks allow all operations (no-op)
 
 ## Common Commands
 
@@ -69,13 +84,24 @@ echo '{"session_id":"test","transcript_path":"test","cwd":".","hook_event_name":
 
 ### Launch Neovim with Socket
 ```bash
-cargo run -- neovim <file>  # Opens Neovim with socket at /tmp/<blake3_hash>.sock
+cargo run -- neovim <file>  # Opens Neovim with socket at /tmp/<blake3_hash>-<pid>.sock
+```
+
+### Multiple Instances
+```bash
+# Open multiple Neovim instances in the same directory
+cargo run -- neovim file1.txt  # Creates /tmp/<hash>-<pid1>.sock
+cargo run -- neovim file2.txt  # Creates /tmp/<hash>-<pid2>.sock
+
+# Hook handler automatically discovers and checks both instances
 ```
 
 ## Important Notes
 
 - The project uses Rust edition 2024
-- Neovim socket paths are computed deterministically: `/tmp/<blake3(canonicalized_cwd)>.sock`
+- Neovim socket paths include PID: `/tmp/<blake3(canonicalized_cwd)>-<pid>.sock`
+- Multiple Neovim instances per directory are supported
+- Hook handler discovers all instances using glob pattern matching
 - Hook handler reads JSON from stdin and writes JSON to stdout (Claude Code protocol)
-- RPC connection timeout is 2 seconds
+- RPC connection timeout is 2 seconds per instance
 - Buffer refresh uses Lua to preserve cursor positions across all windows displaying the buffer
