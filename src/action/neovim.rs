@@ -177,9 +177,13 @@ impl Action for NeovimAction {
     }
 
     fn send_message(&self, message: &str) -> Result<()> {
-        let cmd = format!("echo '{}'", message.replace('\'', "''"));
+        let lua_code = format!(
+            r#"vim.notify("{}", vim.log.levels.WARN)"#,
+            message.replace('"', r#"\""#)
+        );
         let any_success = self.for_each_instance(|nvim| {
-            nvim.command(&cmd)
+            nvim.execute_lua(&lua_code, vec![])
+                .map(|_| ())
                 .context("Failed to send message to Neovim")
         });
 

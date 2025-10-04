@@ -93,20 +93,14 @@ fn check_buffer_modifications(nvim_action: Option<&NeovimAction>, file_path: &st
     };
 
     if status.has_unsaved_changes && status.is_current {
-        let message = format!(
-            "Claude Code blocked: File {} has unsaved changes",
-            file_path
-        );
+        let message = format!("Claude tried to edit: {}", file_path);
         if let Err(e) = action.send_message(&message) {
             eprintln!("Warning: Failed to send message to Neovim: {}", e);
         }
 
         HookOutput::new().with_permission_decision(
             PermissionDecision::Deny,
-            Some(format!(
-                "File {} is currently being edited with unsaved changes",
-                file_path
-            )),
+            Some("Claude tried to edit this file".to_string()),
         )
     } else {
         HookOutput::new()
