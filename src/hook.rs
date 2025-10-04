@@ -1,6 +1,38 @@
+//! Data structures for Claude Code hook protocol.
+//!
+//! This module defines the JSON structures for communicating with Claude Code's
+//! hook system. It supports PreToolUse and PostToolUse hooks with discriminated
+//! union types for different tools (Read, Write, Edit, MultiEdit, Bash).
+//!
+//! # Hook Protocol
+//!
+//! Claude Code sends a JSON payload via stdin with:
+//! - Hook metadata (session_id, cwd, etc.)
+//! - Hook event type (PreToolUse or PostToolUse)
+//! - Tool information (name and input parameters)
+//!
+//! The hook handler responds with a JSON payload via stdout containing:
+//! - Permission decision (Allow, Deny, Ask) for PreToolUse
+//! - Additional context or system messages
+//!
+//! # Example
+//!
+//! ```no_run
+//! use sidekick::hook::{parse_hook, HookOutput, PermissionDecision};
+//!
+//! let json = r#"{"session_id":"abc","transcript_path":"","cwd":".","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"test.txt"}}"#;
+//! let hook = parse_hook(json).unwrap();
+//!
+//! let output = HookOutput::new()
+//!     .with_permission_decision(PermissionDecision::Deny, Some("File has unsaved changes".into()));
+//!
+//! println!("{}", output.to_json().unwrap());
+//! ```
+
 use anyhow::Context;
 
 /// Hook event type
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HookEvent {
     PreToolUse,
@@ -19,6 +51,7 @@ pub struct Hook {
 }
 
 /// Tool types discriminated by tool_name
+#[non_exhaustive]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "tool_name", content = "tool_input")]
 pub enum Tool {
@@ -53,6 +86,7 @@ pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
 }
 
 /// Permission decision for PreToolUse hooks
+#[non_exhaustive]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionDecision {

@@ -3,6 +3,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 mod action;
+mod constants;
 mod handler;
 mod hook;
 mod utils;

@@ -2,6 +2,29 @@
 //!
 //! This module defines the `Action` trait for performing operations on editor buffers,
 //! such as checking buffer status, refreshing content, and sending messages.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use sidekick::action::{Action, neovim::NeovimAction};
+//! use std::path::PathBuf;
+//!
+//! // Create action for Neovim instances
+//! let sockets = vec![PathBuf::from("/tmp/socket.sock")];
+//! let action = NeovimAction::new(sockets);
+//!
+//! // Check buffer status
+//! let status = action.buffer_status("file.txt").unwrap();
+//! if status.has_unsaved_changes && status.is_current {
+//!     println!("File has unsaved changes!");
+//! }
+//!
+//! // Refresh buffer after external modification
+//! action.refresh_buffer("file.txt").unwrap();
+//!
+//! // Send message to editor
+//! action.send_message("Hello from Sidekick!").unwrap();
+//! ```
 
 pub mod neovim;
 

@@ -1,3 +1,28 @@
+//! Hook processing logic for Claude Code integration.
+//!
+//! This module handles Claude Code hooks by reading JSON from stdin, processing
+//! the hook event, and writing the response JSON to stdout. It supports both
+//! PreToolUse and PostToolUse hooks for protecting and refreshing editor buffers.
+//!
+//! # Hook Flow
+//!
+//! 1. PreToolUse: Check if file has unsaved changes before Claude Code modifies it
+//!    - If file is current buffer with unsaved changes → Deny
+//!    - Otherwise → Allow
+//!
+//! 2. PostToolUse: Refresh buffer after Claude Code modifies it
+//!    - Reload buffer from disk across all Neovim instances
+//!    - Preserve cursor positions
+//!
+//! # Example
+//!
+//! ```no_run
+//! use sidekick::handler;
+//!
+//! // Called by Claude Code via stdin/stdout
+//! handler::handle_hook().expect("Failed to process hook");
+//! ```
+
 use std::io::{self, Read, Write};
 
 use crate::action::{Action, neovim::NeovimAction};
@@ -93,14 +118,13 @@ fn check_buffer_modifications(nvim_action: Option<&NeovimAction>, file_path: &st
     };
 
     if status.has_unsaved_changes && status.is_current {
-        let message = format!("Claude tried to edit: {}", file_path);
-        if let Err(e) = action.send_message(&message) {
+        if let Err(e) = action.send_message("Claude tried to edit this file") {
             eprintln!("Warning: Failed to send message to Neovim: {}", e);
         }
 
         HookOutput::new().with_permission_decision(
             PermissionDecision::Deny,
-            Some("Claude tried to edit this file".to_string()),
+            Some("The file is being edited by the user, try again later".to_string()),
         )
     } else {
         HookOutput::new()
