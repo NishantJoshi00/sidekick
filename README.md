@@ -6,9 +6,9 @@ Ever had Claude Code overwrite your unsaved work mid-refactor?
 
 Sidekick keeps you in control while AI assists. No plugins. No deep integrations. Just clean boundaries between you and your AI tools.
 
-[![asciicast](https://asciinema.org/a/746395.svg)](https://asciinema.org/a/746395?t=80)
+<script src="https://asciinema.org/a/746395.js" id="asciicast-746395" async="true" data-t="80"></script>
 
-*Skip to 1:20 to see the real power*
+*Demo starts at 1:20 to show the protection in action*
 
 ---
 
