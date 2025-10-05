@@ -1,10 +1,24 @@
-# Sidekick
+# Sidekick: Your AI Assistant Should Be a Sidekick, Not the Pilot
 
-A Rust CLI tool that bridges Claude Code and Neovim, preventing conflicts when AI-assisted coding meets human editing.
+[![GitHub stars](https://img.shields.io/github/stars/NishantJoshi00/sidekick?style=social)](https://github.com/NishantJoshi00/sidekick)
 
-Most people try to integrate Claude Code deeply into their editor. This project takes the opposite approach: unite Claude Code with your editor **without** tightly coupling them. You stay in control of your editing environment, and Claude Code acts as what it should be—a sidekick, not the pilot.
+Ever had Claude Code overwrite your unsaved work mid-refactor?
 
-No editor plugins. No deep integrations. Just a clean boundary that respects both tools for what they do best.
+Sidekick keeps you in control while AI assists. No plugins. No deep integrations. Just clean boundaries between you and your AI tools.
+
+---
+
+## The Problem
+
+You're 30 minutes into a complex refactor. Multiple files open. Unsaved changes everywhere.
+
+You ask Claude Code to "add error handling to utils.py"
+
+Claude Code obliterates your unsaved work.
+
+Your changes are gone. **Sound familiar?**
+
+Sidekick prevents this. Every. Single. Time.
 
 ## What It Does
 
@@ -15,26 +29,31 @@ Sidekick acts as a safety layer, blocking Claude Code's file modifications when 
 
 ## Installation
 
-> ### Prerequisites
-> 
-> If you don't have Rust installed, install it first:
-> ```bash
-> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-> ```
-
-### Method 1: Direct Install from Git (Recommended)
+### Quick Install (Recommended)
 
 ```bash
 cargo install --git https://github.com/NishantJoshi00/sidekick
 ```
 
-### Method 2: From Source
+<details>
+<summary><b>Don't have Rust?</b> Click here to install it first</summary>
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then run the install command above.
+</details>
+
+<details>
+<summary><b>Alternative:</b> Install from source</summary>
 
 ```bash
 git clone https://github.com/NishantJoshi00/sidekick
 cd sidekick
 cargo install --path .
 ```
+</details>
 
 ## Setup
 
