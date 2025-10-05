@@ -41,6 +41,8 @@ This script will:
 - ✓ Configure Claude Code hooks
 - ✓ Add shell alias automatically
 
+---
+
 <details>
 <summary><b>Manual Installation</b></summary>
 
@@ -50,25 +52,21 @@ This script will:
 cargo install --git https://github.com/NishantJoshi00/sidekick
 ```
 
-<details>
-<summary><b>Don't have Rust?</b> Click here to install it first</summary>
-
+**Don't have Rust?** Install it first:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Then run the install command above.
-</details>
-
-<details>
-<summary><b>Alternative:</b> Install from source</summary>
-
+**Alternative:** Install from source
 ```bash
 git clone https://github.com/NishantJoshi00/sidekick
 cd sidekick
 cargo install --path .
 ```
+
 </details>
+
+---
 
 ## Manual Setup
 
