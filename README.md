@@ -29,7 +29,22 @@ Sidekick acts as a safety layer, blocking Claude Code's file modifications when 
 
 ## Installation
 
-### Quick Install (Recommended)
+### One-Line Install (Automatic Setup)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/NishantJoshi00/sidekick/main/scripts/install.sh | bash
+```
+
+This script will:
+- ✓ Check dependencies (Rust, Python)
+- ✓ Install Sidekick
+- ✓ Configure Claude Code hooks
+- ✓ Add shell alias automatically
+
+<details>
+<summary><b>Manual Installation</b></summary>
+
+### Quick Install
 
 ```bash
 cargo install --git https://github.com/NishantJoshi00/sidekick
@@ -55,7 +70,9 @@ cargo install --path .
 ```
 </details>
 
-## Setup
+## Manual Setup
+
+> **Note:** If you used the one-line installer above, you can skip this section!
 
 ### 1. Shell Alias (Recommended)
 
@@ -108,13 +125,15 @@ That's it! Now when Claude Code attempts to edit a file:
 
 ## Usage
 
-### Launch Neovim with Integration
+Just use Neovim like you always do:
 
 ```bash
-sidekick neovim <file>
+nvim <file>
 ```
 
-This launches Neovim with a Unix socket at `/tmp/<hash>-<pid>.sock`, where the hash is deterministically computed from your current working directory.
+That's it. Seriously.
+
+Because of the shell alias, `nvim` now launches with Sidekick integration automatically. You won't notice anything different—until Claude Code tries to overwrite your unsaved work, and Sidekick quietly blocks it. Work the way you want. Sidekick stays out of your way.
 
 ## How It Works
 
