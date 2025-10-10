@@ -48,11 +48,11 @@ fn test_compute_socket_path_different_pids() {
     // Extract PIDs from filenames (format: hash-pid.sock)
     let pid_str1 = name1
         .strip_suffix(".sock")
-        .and_then(|s| s.split('-').last())
+        .and_then(|s| s.split('-').next_back())
         .unwrap();
     let pid_str2 = name2
         .strip_suffix(".sock")
-        .and_then(|s| s.split('-').last())
+        .and_then(|s| s.split('-').next_back())
         .unwrap();
 
     assert_eq!(pid_str1, "11111");
