@@ -53,7 +53,7 @@ This script will:
 ### Quick Install
 
 ```bash
-cargo install --git https://github.com/NishantJoshi00/sidekick
+cargo install sidekick
 ```
 
 **Don't have Rust?** Install it first:
