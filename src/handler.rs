@@ -48,7 +48,6 @@ pub fn handle_hook() -> anyhow::Result<()> {
         Hook::Tool(h) => match h.hook_event_name {
             HookEvent::PreToolUse => handle_pre_tool_use(&h.tool, nvim_action.as_ref()),
             HookEvent::PostToolUse => handle_post_tool_use(&h.tool, nvim_action.as_ref()),
-            HookEvent::UserPromptSubmit => HookOutput::new(), // shouldn't happen
         },
         Hook::UserPrompt => handle_user_prompt_submit(nvim_action.as_ref()),
     };
@@ -105,7 +104,8 @@ fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
         ctx.file_path, ctx.start_line, ctx.end_line, ctx.content
     );
 
-    HookOutput::new().with_additional_context(context)
+    HookOutput::new()
+        .with_additional_context(context)
 }
 
 /// Check if buffer has unsaved modifications and block if necessary

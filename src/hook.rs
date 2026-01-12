@@ -37,7 +37,6 @@ use anyhow::Context;
 pub enum HookEvent {
     PreToolUse,
     PostToolUse,
-    UserPromptSubmit,
 }
 
 /// Hook input for tool-related events (PreToolUse, PostToolUse)
@@ -99,9 +98,12 @@ pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
 
     match event_name {
         "UserPromptSubmit" => Ok(Hook::UserPrompt),
-        _ => {
+        "PreToolUse" | "PostToolUse" => {
             let hook: ToolHook = serde_json::from_str(input).context("Invalid tool hook")?;
             Ok(Hook::Tool(hook))
+        }
+        _ => {
+            anyhow::bail!("Invalid hook received")
         }
     }
 }
