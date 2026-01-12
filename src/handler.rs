@@ -104,8 +104,7 @@ fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
         ctx.file_path, ctx.start_line, ctx.end_line, ctx.content
     );
 
-    HookOutput::new()
-        .with_additional_context(context)
+    HookOutput::new().with_additional_context(context)
 }
 
 /// Check if buffer has unsaved modifications and block if necessary
