@@ -7,8 +7,8 @@ mod buffer;
 mod connection;
 mod lua;
 
-use crate::action::{Action, BufferStatus};
-use anyhow::{Context, Result};
+use crate::action::{Action, BufferStatus, EditorContext};
+use anyhow::Result;
 use neovim_lib::NeovimApi;
 use std::path::PathBuf;
 
@@ -63,7 +63,7 @@ impl Action for NeovimAction {
         let any_success = connection::for_each_instance(&self.socket_paths, |nvim| {
             nvim.execute_lua(&lua_code, vec![])
                 .map(|_| ())
-                .context("Failed to send message to Neovim")
+                .map_err(|e| anyhow::anyhow!("Failed to send message to Neovim: {}", e))
         });
 
         if any_success {
@@ -71,5 +71,11 @@ impl Action for NeovimAction {
         } else {
             anyhow::bail!("Failed to send message to any Neovim instance")
         }
+    }
+
+    fn get_visual_selection(&self) -> Result<Option<EditorContext>> {
+        Ok(connection::find_first(&self.socket_paths, |nvim| {
+            buffer::get_visual_selection(nvim)
+        }))
     }
 }

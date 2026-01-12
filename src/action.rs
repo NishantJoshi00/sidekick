@@ -35,6 +35,15 @@ pub struct BufferStatus {
     pub has_unsaved_changes: bool,
 }
 
+/// Editor context from visual selection
+#[derive(Debug, Clone)]
+pub struct EditorContext {
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub content: String,
+}
+
 /// Trait for editor actions
 pub trait Action {
     /// Get the status of a buffer
@@ -45,4 +54,7 @@ pub trait Action {
 
     /// Send a message to the editor
     fn send_message(&self, message: &str) -> anyhow::Result<()>;
+
+    /// Get the visual selection from the editor (if any)
+    fn get_visual_selection(&self) -> anyhow::Result<Option<EditorContext>>;
 }

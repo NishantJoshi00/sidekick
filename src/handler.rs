@@ -1,8 +1,7 @@
 //! Hook processing logic for Claude Code integration.
 //!
 //! This module handles Claude Code hooks by reading JSON from stdin, processing
-//! the hook event, and writing the response JSON to stdout. It supports both
-//! PreToolUse and PostToolUse hooks for protecting and refreshing editor buffers.
+//! the hook event, and writing the response JSON to stdout. It supports:
 //!
 //! # Hook Flow
 //!
@@ -13,6 +12,10 @@
 //! 2. PostToolUse: Refresh buffer after Claude Code modifies it
 //!    - Reload buffer from disk across all Neovim instances
 //!    - Preserve cursor positions
+//!
+//! 3. UserPromptSubmit: Inject visual selection as additional context
+//!    - If Neovim has a visual selection → inject as additionalContext
+//!    - Otherwise → no-op
 //!
 //! # Example
 //!
@@ -26,7 +29,7 @@
 use std::io::{self, Read, Write};
 
 use crate::action::{Action, neovim::NeovimAction};
-use crate::hook::{self, HookEvent, HookOutput, PermissionDecision, Tool};
+use crate::hook::{self, Hook, HookEvent, HookOutput, PermissionDecision, Tool};
 use crate::utils;
 
 pub fn handle_hook() -> anyhow::Result<()> {
@@ -40,14 +43,14 @@ pub fn handle_hook() -> anyhow::Result<()> {
     // Get Neovim action if available
     let nvim_action = get_neovim_action()?;
 
-    // Handle based on hook event type
-    let output = match hook.hook_event_name {
-        HookEvent::PreToolUse => {
-            handle_pre_tool_use(&hook.tool, nvim_action.as_ref(), hook.hook_event_name)
-        }
-        HookEvent::PostToolUse => {
-            handle_post_tool_use(&hook.tool, nvim_action.as_ref(), hook.hook_event_name)
-        }
+    // Handle based on hook type
+    let output = match hook {
+        Hook::Tool(h) => match h.hook_event_name {
+            HookEvent::PreToolUse => handle_pre_tool_use(&h.tool, nvim_action.as_ref()),
+            HookEvent::PostToolUse => handle_post_tool_use(&h.tool, nvim_action.as_ref()),
+            HookEvent::UserPromptSubmit => HookOutput::new(), // shouldn't happen
+        },
+        Hook::UserPrompt => handle_user_prompt_submit(nvim_action.as_ref()),
     };
 
     // Return hook output
@@ -67,18 +70,8 @@ fn get_neovim_action() -> anyhow::Result<Option<NeovimAction>> {
     })
 }
 
-/// Handle PreToolUse hook - only perform checks
-fn handle_pre_tool_use(
-    tool: &Tool,
-    nvim_action: Option<&NeovimAction>,
-    event: HookEvent,
-) -> HookOutput {
-    debug_assert_eq!(
-        event,
-        HookEvent::PreToolUse,
-        "PreToolUse handler called with wrong event type"
-    );
-
+/// Handle PreToolUse hook - check if file has unsaved changes
+fn handle_pre_tool_use(tool: &Tool, nvim_action: Option<&NeovimAction>) -> HookOutput {
     match tool {
         Tool::Edit(file_tool) | Tool::Write(file_tool) | Tool::MultiEdit(file_tool) => {
             check_buffer_modifications(nvim_action, &file_tool.file_path)
@@ -88,23 +81,31 @@ fn handle_pre_tool_use(
 }
 
 /// Handle PostToolUse hook - refresh buffers after modifications
-fn handle_post_tool_use(
-    tool: &Tool,
-    nvim_action: Option<&NeovimAction>,
-    event: HookEvent,
-) -> HookOutput {
-    debug_assert_eq!(
-        event,
-        HookEvent::PostToolUse,
-        "PostToolUse handler called with wrong event type"
-    );
-
+fn handle_post_tool_use(tool: &Tool, nvim_action: Option<&NeovimAction>) -> HookOutput {
     match tool {
         Tool::Edit(file_tool) | Tool::Write(file_tool) | Tool::MultiEdit(file_tool) => {
             refresh_buffer(nvim_action, &file_tool.file_path)
         }
         _ => HookOutput::new(),
     }
+}
+
+/// Handle UserPromptSubmit hook - inject visual selection as context
+fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
+    let Some(action) = nvim_action else {
+        return HookOutput::new();
+    };
+
+    let Ok(Some(ctx)) = action.get_visual_selection() else {
+        return HookOutput::new();
+    };
+
+    let context = format!(
+        "[Selected from {}:{}-{}]\n```\n{}\n```",
+        ctx.file_path, ctx.start_line, ctx.end_line, ctx.content
+    );
+
+    HookOutput::new().with_additional_context(context)
 }
 
 /// Check if buffer has unsaved modifications and block if necessary

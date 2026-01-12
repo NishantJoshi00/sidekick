@@ -44,3 +44,36 @@ pub fn send_notification_lua(message: &str) -> String {
         message.replace('"', r#"\""#)
     )
 }
+
+/// Lua code to get visual selection from the current buffer
+pub fn get_visual_selection_lua() -> &'static str {
+    r#"
+    local start_pos = vim.fn.getpos("'<")
+    local end_pos = vim.fn.getpos("'>")
+
+    -- Check if visual marks are set (line numbers > 0)
+    if start_pos[2] == 0 or end_pos[2] == 0 then
+        return nil
+    end
+
+    local start_line = start_pos[2]
+    local end_line = end_pos[2]
+
+    -- Get current buffer file path
+    local file_path = vim.api.nvim_buf_get_name(0)
+    if file_path == "" then
+        return nil
+    end
+
+    -- Get the lines (0-indexed API, so subtract 1 from start)
+    local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+    local content = table.concat(lines, "\n")
+
+    return vim.fn.json_encode({
+        file_path = file_path,
+        start_line = start_line,
+        end_line = end_line,
+        content = content
+    })
+    "#
+}
