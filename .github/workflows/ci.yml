@@ -12,6 +12,7 @@ env:
 jobs:
   test:
     name: Test
+    needs: [fmt, clippy]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -76,6 +77,7 @@ jobs:
 
   build:
     name: Build
+    needs: [fmt, clippy]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
