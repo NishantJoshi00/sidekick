@@ -39,15 +39,22 @@ pub enum HookEvent {
     PostToolUse,
 }
 
-/// Hook input structure
+/// Hook input for tool-related events (PreToolUse, PostToolUse)
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Hook {
+pub struct ToolHook {
     pub session_id: String,
     pub transcript_path: String,
     pub cwd: String,
     pub hook_event_name: HookEvent,
     #[serde(flatten)]
     pub tool: Tool,
+}
+
+/// Parsed hook - either tool-related or user prompt
+#[derive(Debug)]
+pub enum Hook {
+    Tool(ToolHook),
+    UserPrompt,
 }
 
 /// Tool types discriminated by tool_name
@@ -82,7 +89,23 @@ pub struct BashToolInput {
 }
 
 pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
-    serde_json::from_str(input).context("Invalid JSON for Hook")
+    // First, peek at the hook_event_name to determine which struct to parse
+    let value: serde_json::Value = serde_json::from_str(input).context("Invalid JSON")?;
+    let event_name = value
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .context("Missing hook_event_name")?;
+
+    match event_name {
+        "UserPromptSubmit" => Ok(Hook::UserPrompt),
+        "PreToolUse" | "PostToolUse" => {
+            let hook: ToolHook = serde_json::from_str(input).context("Invalid tool hook")?;
+            Ok(Hook::Tool(hook))
+        }
+        _ => {
+            anyhow::bail!("Invalid hook received")
+        }
+    }
 }
 
 /// Permission decision for PreToolUse hooks
@@ -184,6 +207,17 @@ impl HookOutput {
             permission_decision: Some(decision),
             permission_decision_reason: reason,
             additional_context: None,
+        });
+        self
+    }
+
+    /// Set additional context for UserPromptSubmit
+    pub fn with_additional_context(mut self, context: impl Into<String>) -> Self {
+        self.hook_specific_output = Some(HookSpecificOutput {
+            hook_event_name: "UserPromptSubmit".to_string(),
+            permission_decision: None,
+            permission_decision_reason: None,
+            additional_context: Some(context.into()),
         });
         self
     }

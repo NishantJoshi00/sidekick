@@ -44,3 +44,49 @@ pub fn send_notification_lua(message: &str) -> String {
         message.replace('"', r#"\""#)
     )
 }
+
+/// Lua code to get visual selection from the current buffer
+pub fn get_visual_selection_lua() -> &'static str {
+    r#"
+    local mode = vim.fn.mode()
+    local start_pos, end_pos, sel_type
+
+    if mode:match('[vV\22]') then
+        -- Currently in visual mode: use live selection
+        start_pos = vim.fn.getpos("v")
+        end_pos = vim.fn.getpos(".")
+        sel_type = mode:sub(1, 1)
+    else
+        -- Not in visual mode: use last visual selection marks
+        start_pos = vim.fn.getpos("'<")
+        end_pos = vim.fn.getpos("'>")
+        sel_type = vim.fn.visualmode()
+    end
+
+    -- Check if visual marks are set (line numbers > 0)
+    if start_pos[2] == 0 or end_pos[2] == 0 then
+        return nil
+    end
+
+    -- Get current buffer file path
+    local file_path = vim.api.nvim_buf_get_name(0)
+    if file_path == "" then
+        return nil
+    end
+
+    -- getregion handles all visual modes (v, V, Ctrl-V) correctly
+    local lines = vim.fn.getregion(start_pos, end_pos, { type = sel_type })
+    local content = table.concat(lines, "\n")
+
+    -- Get ordered line numbers
+    local start_line = math.min(start_pos[2], end_pos[2])
+    local end_line = math.max(start_pos[2], end_pos[2])
+
+    return vim.fn.json_encode({
+        file_path = file_path,
+        start_line = start_line,
+        end_line = end_line,
+        content = content
+    })
+    "#
+}

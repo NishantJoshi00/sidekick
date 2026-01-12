@@ -1,6 +1,6 @@
 //! Integration tests for hook processing
 
-use sidekick::hook::{HookEvent, HookOutput, PermissionDecision, Tool, parse_hook};
+use sidekick::hook::{Hook, HookEvent, HookOutput, PermissionDecision, Tool, parse_hook};
 
 #[test]
 fn test_parse_pre_tool_use_edit_hook() {
@@ -19,11 +19,15 @@ fn test_parse_pre_tool_use_edit_hook() {
 
     let hook = parse_hook(json).expect("Failed to parse hook");
 
-    assert_eq!(hook.session_id, "test-session");
-    assert_eq!(hook.cwd, "/test/dir");
-    assert_eq!(hook.hook_event_name, HookEvent::PreToolUse);
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
 
-    match hook.tool {
+    assert_eq!(h.session_id, "test-session");
+    assert_eq!(h.cwd, "/test/dir");
+    assert_eq!(h.hook_event_name, HookEvent::PreToolUse);
+
+    match h.tool {
         Tool::Edit(input) => {
             assert_eq!(input.file_path, "test.txt");
             assert_eq!(input.old_string, Some("old".to_string()));
@@ -49,9 +53,13 @@ fn test_parse_post_tool_use_write_hook() {
 
     let hook = parse_hook(json).expect("Failed to parse hook");
 
-    assert_eq!(hook.hook_event_name, HookEvent::PostToolUse);
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
 
-    match hook.tool {
+    assert_eq!(h.hook_event_name, HookEvent::PostToolUse);
+
+    match h.tool {
         Tool::Write(input) => {
             assert_eq!(input.file_path, "test.txt");
             assert_eq!(input.content, Some("file content".to_string()));
@@ -76,7 +84,11 @@ fn test_parse_bash_hook() {
 
     let hook = parse_hook(json).expect("Failed to parse hook");
 
-    match hook.tool {
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
+
+    match h.tool {
         Tool::Bash(input) => {
             assert_eq!(input.command, "ls -la");
             assert_eq!(input.description, "List files");
@@ -131,10 +143,39 @@ fn test_parse_multiedit_hook() {
 
     let hook = parse_hook(json).expect("Failed to parse hook");
 
-    match hook.tool {
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
+
+    match h.tool {
         Tool::MultiEdit(input) => {
             assert_eq!(input.file_path, "test.txt");
         }
         _ => panic!("Expected MultiEdit tool"),
     }
+}
+
+#[test]
+fn test_parse_user_prompt_submit_hook() {
+    let json = r#"{
+        "session_id": "test-session",
+        "transcript_path": "/tmp/transcript",
+        "cwd": "/test/dir",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "test prompt"
+    }"#;
+
+    let hook = parse_hook(json).expect("Failed to parse hook");
+
+    assert!(matches!(hook, Hook::UserPrompt));
+}
+
+#[test]
+fn test_hook_output_with_additional_context() {
+    let output = HookOutput::new().with_additional_context("Selected code here");
+
+    let json = output.to_json().expect("Failed to serialize");
+
+    assert!(json.contains("\"additionalContext\":\"Selected code here\""));
+    assert!(json.contains("\"hookEventName\":\"UserPromptSubmit\""));
 }

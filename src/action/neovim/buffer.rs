@@ -1,7 +1,7 @@
 //! Buffer operations for Neovim instances.
 
 use super::lua;
-use crate::action::BufferStatus;
+use crate::action::{BufferStatus, EditorContext};
 use anyhow::{Context, Result};
 use neovim_lib::{Neovim, NeovimApi, neovim_api::Buffer};
 use std::path::PathBuf;
@@ -58,4 +58,38 @@ pub fn refresh_buffer(nvim: &mut Neovim, file_path: &str) -> Result<()> {
     nvim.execute_lua(&lua_code, vec![])
         .map(|_| ())
         .context("Failed to reload buffer")
+}
+
+/// Get visual selection from current buffer
+pub fn get_visual_selection(nvim: &mut Neovim) -> Result<Option<EditorContext>> {
+    let lua_code = lua::get_visual_selection_lua();
+
+    let result = nvim
+        .execute_lua(lua_code, vec![])
+        .context("Failed to get visual selection")?;
+
+    // Lua returns nil if no selection, or a JSON string
+    if result.is_nil() {
+        return Ok(None);
+    }
+
+    let json_str = result.as_str().context("Expected string from Lua")?;
+
+    #[derive(serde::Deserialize)]
+    struct SelectionData {
+        file_path: String,
+        start_line: u32,
+        end_line: u32,
+        content: String,
+    }
+
+    let data: SelectionData =
+        serde_json::from_str(json_str).context("Failed to parse selection JSON")?;
+
+    Ok(Some(EditorContext {
+        file_path: data.file_path,
+        start_line: data.start_line,
+        end_line: data.end_line,
+        content: data.content,
+    }))
 }

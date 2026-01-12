@@ -108,6 +108,37 @@ That's it! Now when Claude Code attempts to edit a file:
 - **Blocked**: File is in current buffer with unsaved changes
 - **Auto-refresh**: Neovim buffers are automatically reloaded after Claude Code modifies files
 
+### 3. Visual Selection Context (Optional)
+
+Want Claude Code to see what you've selected in Neovim? Add this hook:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sidekick hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Now when you submit a prompt to Claude Code, any visual selection in Neovim is automatically injected as context:
+
+1. Select code in Neovim (visual mode)
+2. Exit visual mode (the selection marks are preserved)
+3. Submit your prompt to Claude Code
+4. Claude sees your selection as additional context
+
+No selection? Nothing happens — the hook is a no-op.
+
 ## Usage
 
 Just use Neovim like you always do:
