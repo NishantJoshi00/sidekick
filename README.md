@@ -30,6 +30,29 @@ This script will:
 
 ---
 
+### Official Method
+
+**1. Install Sidekick**
+```bash
+cargo install sidekick
+```
+
+**Don't have Rust?** Install it first:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**2. Configure Claude Code Integration**
+```bash
+# In Claude Code
+/plugin marketplace add NishantJoshi00/claude-plugins
+/plugin install sidekick@nishant-plugins
+```
+
+That's it! The plugin automatically configures the necessary hooks for Claude Code integration.
+
+---
+
 <details>
 <summary><b>Manual Installation</b></summary>
 
