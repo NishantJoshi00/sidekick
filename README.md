@@ -1,35 +1,18 @@
-# Sidekick: Your AI Assistant Should Be a Sidekick, Not the Pilot
+# Sidekick
+
+Protects your unsaved Neovim work from Claude Code.
 
 [![GitHub stars](https://img.shields.io/github/stars/NishantJoshi00/sidekick?style=social)](https://github.com/NishantJoshi00/sidekick)
 
-Ever had Claude Code overwrite your unsaved work mid-refactor?
-
-Sidekick keeps you in control while AI assists. No plugins. No deep integrations. Just clean boundaries between you and your AI tools.
+**How it works:**
+- You're editing a file in Neovim with unsaved changes
+- Claude Code tries to modify that file
+- Sidekick blocks it — your work is safe
+- Save when you're ready, Claude Code proceeds
 
 [![asciicast](https://asciinema.org/a/746395.svg)](https://asciinema.org/a/746395?t=80)
 
-*Skip to 1:20 to see the real power*
-
----
-
-## The Problem
-
-You're 30 minutes into a complex refactor. Multiple files open. Unsaved changes everywhere.
-
-You ask Claude Code to "add error handling to utils.py"
-
-Claude Code obliterates your unsaved work.
-
-Your changes are gone. **Sound familiar?**
-
-Sidekick prevents this. Every. Single. Time.
-
-## What It Does
-
-1. **Neovim Protection**: Prevents Claude Code from modifying files you're actively editing in Neovim with unsaved changes
-2. **Smart Neovim Launcher**: Opens Neovim instances with per-directory socket paths for seamless integration
-
-Sidekick acts as a safety layer, blocking Claude Code's file modifications when they would overwrite your unsaved work.
+*Demo: Skip to 1:20 to see Sidekick block an edit*
 
 ## Installation
 
@@ -74,7 +57,7 @@ This script will:
 ### Quick Install
 
 ```bash
-cargo install --git https://github.com/NishantJoshi00/sidekick
+cargo install sidekick
 ```
 
 **Don't have Rust?** Install it first:
@@ -146,6 +129,37 @@ That's it! Now when Claude Code attempts to edit a file:
 - **Blocked**: File is in current buffer with unsaved changes
 - **Auto-refresh**: Neovim buffers are automatically reloaded after Claude Code modifies files
 
+### 3. Visual Selection Context (Optional)
+
+Want Claude Code to see what you've selected in Neovim? Add this hook:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sidekick hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Now when you submit a prompt to Claude Code, any visual selection in Neovim is automatically injected as context:
+
+1. Select code in Neovim (visual mode)
+2. Exit visual mode (the selection marks are preserved)
+3. Submit your prompt to Claude Code
+4. Claude sees your selection as additional context
+
+No selection? Nothing happens — the hook is a no-op.
+
 ## Usage
 
 Just use Neovim like you always do:
@@ -194,18 +208,8 @@ claude "refactor main.rs to use async/await"
 # Save your changes, then Claude Code can proceed
 ```
 
-## Built with Love For
-
-**Neovim Community**
-
-For creating the most extensible, keyboard-driven editor that makes coding feel like a superpower. Your commitment to backwards compatibility, clean architecture, and RPC-first design made this integration possible.
-
-**Claude Code Community**
-
-For pushing the boundaries of AI-assisted development with a tool that actually understands context and respects developer workflows. The hook system is a brilliant design choice that enables tools like this to exist.
-
-This project exists because both communities care deeply about craft, extensibility, and putting developers first.
-
 ## Contributing
 
-Issues and pull requests welcome! If you're using this with other editors (Emacs, VS Code with Neovim plugin, Helix), contributions to support them would be amazing.
+Issues and pull requests welcome!
+
+Interested in extending Sidekick to other editors or AI tools? See [PHILOSOPHY.md](PHILOSOPHY.md) for the roadmap and vision.

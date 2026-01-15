@@ -225,7 +225,7 @@ main() {
     if [ "$sidekick_installed" = false ]; then
         print_info "Installing Sidekick..."
 
-        if cargo install --git https://github.com/NishantJoshi00/sidekick; then
+        if cargo install sidekick; then
             print_success "Sidekick installed successfully"
         else
             print_error "Failed to install Sidekick"
