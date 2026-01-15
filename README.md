@@ -49,7 +49,22 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 /plugin install sidekick@nishant-plugins
 ```
 
-That's it! The plugin automatically configures the necessary hooks for Claude Code integration.
+The plugin automatically configures the necessary hooks for Claude Code integration.
+
+**3. Set up shell alias**
+
+Add this to your shell configuration (`~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+alias nvim='sidekick neovim'
+```
+
+Then reload your shell:
+```bash
+source ~/.bashrc  # or ~/.zshrc
+```
+
+That's it! Now `nvim` launches with Sidekick integration automatically.
 
 ---
 
