@@ -8,35 +8,6 @@ Sidekick is a Rust-based CLI tool that provides two main functionalities:
 1. **Claude Code Hook Handler**: Intercepts Claude Code tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
 2. **Neovim Integration**: Launches Neovim instances with deterministic Unix socket paths based on the current working directory and process ID (using blake3 hashing)
 
-## Installation
-
-### As a Claude Code Plugin
-
-1. **Install the sidekick binary globally**:
-   ```bash
-   cargo install --path .
-   ```
-
-2. **Install the plugin locally** (from the plugin directory):
-   ```bash
-   # Add this repository as a local plugin
-   /plugin add local /path/to/sidekick
-
-   # Install the plugin
-   /plugin install sidekick
-   ```
-
-3. **Launch Neovim with sidekick**:
-   ```bash
-   sidekick neovim <file>
-   ```
-
-The plugin will automatically hook into Claude Code's Edit, Write, and MultiEdit operations, preventing file modifications when you have unsaved changes in Neovim.
-
-### Manual Installation (without plugin)
-
-If you prefer to configure hooks manually, install the binary and configure the hooks in your Claude Code settings to call `sidekick hook` for PreToolUse and PostToolUse events.
-
 ## Architecture
 
 ### Core Components

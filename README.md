@@ -16,28 +16,7 @@ Protects your unsaved Neovim work from Claude Code.
 
 ## Installation
 
-### Option 1: Claude Code Plugin (Recommended)
-
-The easiest way to get started:
-
-```bash
-# 1. Install the binary
-cargo install --git https://github.com/NishantJoshi00/sidekick
-
-# 2. Install as a Claude Code plugin
-/plugin add github NishantJoshi00/sidekick
-/plugin install sidekick
-
-# 3. Add shell alias (recommended)
-echo "alias nvim='sidekick neovim'" >> ~/.zshrc  # or ~/.bashrc
-source ~/.zshrc
-```
-
-That's it! The plugin automatically configures Claude Code hooks. Just launch Neovim with `nvim` and you're protected.
-
----
-
-### Option 2: One-Line Install (Automatic Setup)
+### One-Line Install (Automatic Setup)
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/NishantJoshi00/sidekick/main/scripts/install.sh | bash
@@ -52,7 +31,7 @@ This script will:
 ---
 
 <details>
-<summary><b>Option 3: Manual Installation</b></summary>
+<summary><b>Manual Installation</b></summary>
 
 ### Quick Install
 
@@ -78,7 +57,7 @@ cargo install --path .
 
 ## Manual Setup
 
-> **Note:** If you used the plugin installation or one-line installer, you can skip this section!
+> **Note:** If you used the one-line installer above, you can skip this section!
 
 ### 1. Shell Alias (Recommended)
 
