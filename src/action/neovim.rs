@@ -73,8 +73,8 @@ impl Action for NeovimAction {
         }
     }
 
-    fn get_visual_selection(&self) -> Result<Option<EditorContext>> {
-        Ok(connection::find_first(&self.socket_paths, |nvim| {
+    fn get_visual_selections(&self) -> Result<Vec<EditorContext>> {
+        Ok(connection::collect_all(&self.socket_paths, |nvim| {
             buffer::get_visual_selection(nvim)
         }))
     }

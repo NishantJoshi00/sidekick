@@ -49,17 +49,14 @@ where
     any_processed.then(|| result.unwrap_or_else(|acc| acc))
 }
 
-/// Find first non-None result from any Neovim instance
-pub fn find_first<T, F>(socket_paths: &[PathBuf], mut f: F) -> Option<T>
+/// Collect all non-None results from all Neovim instances
+pub fn collect_all<T, F>(socket_paths: &[PathBuf], mut f: F) -> Vec<T>
 where
     F: FnMut(&mut Neovim) -> Result<Option<T>>,
 {
-    for path in socket_paths {
-        if let Ok(mut nvim) = connect(path)
-            && let Ok(Some(result)) = f(&mut nvim)
-        {
-            return Some(result);
-        }
-    }
-    None
+    socket_paths
+        .iter()
+        .filter_map(|path| connect(path).ok())
+        .filter_map(|mut nvim| f(&mut nvim).ok().flatten())
+        .collect()
 }

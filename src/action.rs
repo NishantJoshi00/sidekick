@@ -55,6 +55,6 @@ pub trait Action {
     /// Send a message to the editor
     fn send_message(&self, message: &str) -> anyhow::Result<()>;
 
-    /// Get the visual selection from the editor (if any)
-    fn get_visual_selection(&self) -> anyhow::Result<Option<EditorContext>>;
+    /// Get visual selections from all editor instances
+    fn get_visual_selections(&self) -> anyhow::Result<Vec<EditorContext>>;
 }

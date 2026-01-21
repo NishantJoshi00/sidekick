@@ -89,20 +89,30 @@ fn handle_post_tool_use(tool: &Tool, nvim_action: Option<&NeovimAction>) -> Hook
     }
 }
 
-/// Handle UserPromptSubmit hook - inject visual selection as context
+/// Handle UserPromptSubmit hook - inject visual selections as context
 fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
     let Some(action) = nvim_action else {
         return HookOutput::new();
     };
 
-    let Ok(Some(ctx)) = action.get_visual_selection() else {
+    let Ok(selections) = action.get_visual_selections() else {
         return HookOutput::new();
     };
 
-    let context = format!(
-        "[Selected from {}:{}-{}]\n```\n{}\n```",
-        ctx.file_path, ctx.start_line, ctx.end_line, ctx.content
-    );
+    if selections.is_empty() {
+        return HookOutput::new();
+    }
+
+    let context = selections
+        .iter()
+        .map(|ctx| {
+            format!(
+                "[Selected from {}:{}-{}]\n```\n{}\n```",
+                ctx.file_path, ctx.start_line, ctx.end_line, ctx.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
 
     HookOutput::new().with_additional_context(context)
 }
