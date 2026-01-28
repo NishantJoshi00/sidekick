@@ -1,0 +1,59 @@
+{
+  "name": "vscode-sidekick",
+  "displayName": "Sidekick - Claude Code Integration",
+  "description": "Protects your unsaved work from Claude Code edits and provides visual context injection",
+  "version": "0.1.0",
+  "publisher": "sidekick",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "ai",
+    "editor",
+    "integration"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sidekick.showSocketPath",
+        "title": "Sidekick: Show Socket Path"
+      },
+      {
+        "command": "sidekick.restart",
+        "title": "Sidekick: Restart IPC Server"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "blake3": "^2.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NishantJoshi00/sidekick"
+  },
+  "license": "MIT"
+}

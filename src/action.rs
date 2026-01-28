@@ -27,6 +27,7 @@
 //! ```
 
 pub mod neovim;
+pub mod vscode;
 
 /// Buffer status information
 #[derive(Debug, Clone)]
