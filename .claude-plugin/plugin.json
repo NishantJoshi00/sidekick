@@ -1,7 +1,7 @@
 {
   "name": "sidekick",
-  "version": "0.2.0",
-  "description": "Neovim integration for Claude Code - prevents file modifications when files have unsaved changes in Neovim.\n`cargo install --git https://github.com/NishantJoshi00/sidekick` to install the CLI utility.",
+  "version": "0.3.0",
+  "description": "Editor integration (Neovim + VSCode) for Claude Code - prevents file modifications when files have unsaved changes.\n`cargo install --git https://github.com/NishantJoshi00/sidekick` to install the CLI utility.",
   "author": {
     "name": "Nishant Joshi"
   },
@@ -9,6 +9,7 @@
   "repository": "https://github.com/NishantJoshi00/sidekick",
   "keywords": [
     "neovim",
+    "vscode",
     "editor",
     "integration",
     "hooks"

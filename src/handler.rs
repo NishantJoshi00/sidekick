@@ -10,11 +10,11 @@
 //!    - Otherwise → Allow
 //!
 //! 2. PostToolUse: Refresh buffer after Claude Code modifies it
-//!    - Reload buffer from disk across all Neovim instances
+//!    - Reload buffer from disk across all editor instances (Neovim and VSCode)
 //!    - Preserve cursor positions
 //!
 //! 3. UserPromptSubmit: Inject visual selection as additional context
-//!    - If Neovim has a visual selection → inject as additionalContext
+//!    - If any editor has a visual selection → inject as additionalContext
 //!    - Otherwise → no-op
 //!
 //! # Example
@@ -28,9 +28,99 @@
 
 use std::io::{self, Read, Write};
 
-use crate::action::{Action, neovim::NeovimAction};
+use crate::action::neovim::NeovimAction;
+use crate::action::vscode::VSCodeAction;
+use crate::action::{Action, BufferStatus, EditorContext};
 use crate::hook::{self, Hook, HookEvent, HookOutput, PermissionDecision, Tool};
 use crate::utils;
+
+/// Collection of all available editor actions
+struct EditorActions {
+    neovim: Option<NeovimAction>,
+    vscode: Option<VSCodeAction>,
+}
+
+impl EditorActions {
+    /// Check if any editor is available
+    fn has_any(&self) -> bool {
+        self.neovim.is_some() || self.vscode.is_some()
+    }
+
+    /// Get combined buffer status from all editors
+    fn buffer_status(&self, file_path: &str) -> BufferStatus {
+        let mut combined = BufferStatus {
+            is_current: false,
+            has_unsaved_changes: false,
+        };
+
+        if let Some(ref nvim) = self.neovim
+            && let Ok(status) = nvim.buffer_status(file_path)
+        {
+            combined.is_current = combined.is_current || status.is_current;
+            combined.has_unsaved_changes =
+                combined.has_unsaved_changes || status.has_unsaved_changes;
+        }
+
+        if let Some(ref vscode) = self.vscode
+            && let Ok(status) = vscode.buffer_status(file_path)
+        {
+            combined.is_current = combined.is_current || status.is_current;
+            combined.has_unsaved_changes =
+                combined.has_unsaved_changes || status.has_unsaved_changes;
+        }
+
+        combined
+    }
+
+    /// Refresh buffer in all editors
+    fn refresh_buffer(&self, file_path: &str) {
+        if let Some(ref nvim) = self.neovim
+            && let Err(e) = nvim.refresh_buffer(file_path)
+        {
+            eprintln!("Warning: Failed to refresh buffer in Neovim: {}", e);
+        }
+
+        if let Some(ref vscode) = self.vscode
+            && let Err(e) = vscode.refresh_buffer(file_path)
+        {
+            eprintln!("Warning: Failed to refresh buffer in VSCode: {}", e);
+        }
+    }
+
+    /// Send message to all editors
+    fn send_message(&self, message: &str) {
+        if let Some(ref nvim) = self.neovim
+            && let Err(e) = nvim.send_message(message)
+        {
+            eprintln!("Warning: Failed to send message to Neovim: {}", e);
+        }
+
+        if let Some(ref vscode) = self.vscode
+            && let Err(e) = vscode.send_message(message)
+        {
+            eprintln!("Warning: Failed to send message to VSCode: {}", e);
+        }
+    }
+
+    /// Get visual selections from all editors
+    fn get_visual_selections(&self) -> Vec<EditorContext> {
+        let mut selections = Vec::new();
+
+        if let Some(ref nvim) = self.neovim
+            && let Ok(mut nvim_selections) = nvim.get_visual_selections()
+        {
+            selections.append(&mut nvim_selections);
+        }
+
+        if let Some(ref vscode) = self.vscode
+            && let Ok(mut vscode_selections) = vscode.get_visual_selections()
+        {
+            selections.append(&mut vscode_selections);
+        }
+
+        selections
+    }
+}
 
 pub fn handle_hook() -> anyhow::Result<()> {
     // Read hook input from stdin
@@ -40,16 +130,16 @@ pub fn handle_hook() -> anyhow::Result<()> {
     // Parse the hook
     let hook = hook::parse_hook(&input)?;
 
-    // Get Neovim action if available
-    let nvim_action = get_neovim_action()?;
+    // Get actions for all available editors
+    let actions = get_editor_actions()?;
 
     // Handle based on hook type
     let output = match hook {
         Hook::Tool(h) => match h.hook_event_name {
-            HookEvent::PreToolUse => handle_pre_tool_use(&h.tool, nvim_action.as_ref()),
-            HookEvent::PostToolUse => handle_post_tool_use(&h.tool, nvim_action.as_ref()),
+            HookEvent::PreToolUse => handle_pre_tool_use(&h.tool, &actions),
+            HookEvent::PostToolUse => handle_post_tool_use(&h.tool, &actions),
         },
-        Hook::UserPrompt => handle_user_prompt_submit(nvim_action.as_ref()),
+        Hook::UserPrompt => handle_user_prompt_submit(&actions),
     };
 
     // Return hook output
@@ -58,46 +148,52 @@ pub fn handle_hook() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Get Neovim action if any sockets exist
-fn get_neovim_action() -> anyhow::Result<Option<NeovimAction>> {
-    let socket_paths = utils::find_matching_sockets()?;
+/// Get actions for all available editors
+fn get_editor_actions() -> anyhow::Result<EditorActions> {
+    let nvim_sockets = utils::find_neovim_sockets()?;
+    let vscode_sockets = utils::find_vscode_sockets()?;
 
-    Ok(if socket_paths.is_empty() {
-        None
-    } else {
-        Some(NeovimAction::new(socket_paths))
+    Ok(EditorActions {
+        neovim: if nvim_sockets.is_empty() {
+            None
+        } else {
+            Some(NeovimAction::new(nvim_sockets))
+        },
+        vscode: if vscode_sockets.is_empty() {
+            None
+        } else {
+            Some(VSCodeAction::new(vscode_sockets))
+        },
     })
 }
 
 /// Handle PreToolUse hook - check if file has unsaved changes
-fn handle_pre_tool_use(tool: &Tool, nvim_action: Option<&NeovimAction>) -> HookOutput {
+fn handle_pre_tool_use(tool: &Tool, actions: &EditorActions) -> HookOutput {
     match tool {
         Tool::Edit(file_tool) | Tool::Write(file_tool) | Tool::MultiEdit(file_tool) => {
-            check_buffer_modifications(nvim_action, &file_tool.file_path)
+            check_buffer_modifications(actions, &file_tool.file_path)
         }
         _ => HookOutput::new(),
     }
 }
 
 /// Handle PostToolUse hook - refresh buffers after modifications
-fn handle_post_tool_use(tool: &Tool, nvim_action: Option<&NeovimAction>) -> HookOutput {
+fn handle_post_tool_use(tool: &Tool, actions: &EditorActions) -> HookOutput {
     match tool {
         Tool::Edit(file_tool) | Tool::Write(file_tool) | Tool::MultiEdit(file_tool) => {
-            refresh_buffer(nvim_action, &file_tool.file_path)
+            refresh_buffer(actions, &file_tool.file_path)
         }
         _ => HookOutput::new(),
     }
 }
 
 /// Handle UserPromptSubmit hook - inject visual selections as context
-fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
-    let Some(action) = nvim_action else {
+fn handle_user_prompt_submit(actions: &EditorActions) -> HookOutput {
+    if !actions.has_any() {
         return HookOutput::new();
-    };
+    }
 
-    let Ok(selections) = action.get_visual_selections() else {
-        return HookOutput::new();
-    };
+    let selections = actions.get_visual_selections();
 
     if selections.is_empty() {
         return HookOutput::new();
@@ -118,19 +214,15 @@ fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
 }
 
 /// Check if buffer has unsaved modifications and block if necessary
-fn check_buffer_modifications(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOutput {
-    let Some(action) = nvim_action else {
+fn check_buffer_modifications(actions: &EditorActions, file_path: &str) -> HookOutput {
+    if !actions.has_any() {
         return HookOutput::new();
-    };
+    }
 
-    let Ok(status) = action.buffer_status(file_path) else {
-        return HookOutput::new();
-    };
+    let status = actions.buffer_status(file_path);
 
     if status.has_unsaved_changes && status.is_current {
-        if let Err(e) = action.send_message("Claude tried to edit this file") {
-            eprintln!("Warning: Failed to send message to Neovim: {}", e);
-        }
+        actions.send_message("Claude tried to edit this file");
 
         HookOutput::new().with_permission_decision(
             PermissionDecision::Deny,
@@ -142,14 +234,12 @@ fn check_buffer_modifications(nvim_action: Option<&NeovimAction>, file_path: &st
 }
 
 /// Refresh buffer after file modification
-fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOutput {
-    let Some(action) = nvim_action else {
+fn refresh_buffer(actions: &EditorActions, file_path: &str) -> HookOutput {
+    if !actions.has_any() {
         return HookOutput::new();
-    };
-
-    if let Err(e) = action.refresh_buffer(file_path) {
-        eprintln!("Warning: Failed to refresh buffer: {}", e);
     }
+
+    actions.refresh_buffer(file_path);
 
     HookOutput::new()
 }

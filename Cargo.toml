@@ -1,14 +1,14 @@
 [package]
 name = "sidekick"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Nishant Joshi"]
-description = "Seamless integration between Claude Code and Neovim. Protects your workflow by safely coordinating AI edits with your unsaved work."
+description = "Seamless integration between Claude Code and your editor (Neovim + VSCode). Protects your workflow by safely coordinating AI edits with your unsaved work."
 readme = "README.md"
 homepage = "https://github.com/NishantJoshi00/sidekick"
 repository = "https://github.com/NishantJoshi00/sidekick"
 license = "MIT"
-keywords = ["neovim", "claude", "ai", "editor", "hook"]
+keywords = ["neovim", "vscode", "claude", "ai", "editor", "hook"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
