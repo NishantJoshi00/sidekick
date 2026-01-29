@@ -24,6 +24,27 @@ export interface RPCResponse {
 }
 
 /**
+ * Buffer status request params
+ */
+interface BufferStatusParams {
+    file_path: string;
+}
+
+/**
+ * Refresh buffer request params
+ */
+interface RefreshBufferParams {
+    file_path: string;
+}
+
+/**
+ * Send message request params
+ */
+interface SendMessageParams {
+    message: string;
+}
+
+/**
  * Buffer status response
  */
 interface BufferStatusResult {
@@ -39,6 +60,42 @@ interface EditorContext {
     start_line: number;
     end_line: number;
     content: string;
+}
+
+/**
+ * Type guard to check if params match BufferStatusParams
+ */
+function isBufferStatusParams(params: unknown): params is BufferStatusParams {
+    return (
+        typeof params === 'object' &&
+        params !== null &&
+        'file_path' in params &&
+        typeof (params as BufferStatusParams).file_path === 'string'
+    );
+}
+
+/**
+ * Type guard to check if params match RefreshBufferParams
+ */
+function isRefreshBufferParams(params: unknown): params is RefreshBufferParams {
+    return (
+        typeof params === 'object' &&
+        params !== null &&
+        'file_path' in params &&
+        typeof (params as RefreshBufferParams).file_path === 'string'
+    );
+}
+
+/**
+ * Type guard to check if params match SendMessageParams
+ */
+function isSendMessageParams(params: unknown): params is SendMessageParams {
+    return (
+        typeof params === 'object' &&
+        params !== null &&
+        'message' in params &&
+        typeof (params as SendMessageParams).message === 'string'
+    );
 }
 
 /**
@@ -79,16 +136,17 @@ export function handleRequest(request: RPCRequest): RPCResponse {
  * Check if a file has unsaved changes and is the current buffer
  */
 function handleBufferStatus(request: RPCRequest): RPCResponse {
-    const filePath = request.params?.file_path as string;
-    if (!filePath) {
+    if (!isBufferStatusParams(request.params)) {
         return {
             id: request.id,
             error: {
                 code: -32602,
-                message: 'Missing file_path parameter'
+                message: 'Missing or invalid file_path parameter'
             }
         };
     }
+
+    const filePath = request.params.file_path;
 
     // Resolve to absolute path
     const absolutePath = resolveFilePath(filePath);
@@ -105,12 +163,13 @@ function handleBufferStatus(request: RPCRequest): RPCResponse {
 
     if (!document) {
         // File is not open in any editor
+        const result: BufferStatusResult = {
+            is_current: false,
+            has_unsaved_changes: false
+        };
         return {
             id: request.id,
-            result: {
-                is_current: false,
-                has_unsaved_changes: false
-            } as BufferStatusResult
+            result
         };
     }
 
@@ -118,12 +177,13 @@ function handleBufferStatus(request: RPCRequest): RPCResponse {
     const activeEditor = vscode.window.activeTextEditor;
     const isCurrent = activeEditor?.document === document;
 
+    const result: BufferStatusResult = {
+        is_current: isCurrent ?? false,
+        has_unsaved_changes: document.isDirty
+    };
     return {
         id: request.id,
-        result: {
-            is_current: isCurrent,
-            has_unsaved_changes: document.isDirty
-        } as BufferStatusResult
+        result
     };
 }
 
@@ -131,17 +191,17 @@ function handleBufferStatus(request: RPCRequest): RPCResponse {
  * Refresh a buffer by reloading it from disk
  */
 function handleRefreshBuffer(request: RPCRequest): RPCResponse {
-    const filePath = request.params?.file_path as string;
-    if (!filePath) {
+    if (!isRefreshBufferParams(request.params)) {
         return {
             id: request.id,
             error: {
                 code: -32602,
-                message: 'Missing file_path parameter'
+                message: 'Missing or invalid file_path parameter'
             }
         };
     }
 
+    const filePath = request.params.file_path;
     const absolutePath = resolveFilePath(filePath);
 
     // Find the document
@@ -171,7 +231,7 @@ function handleRefreshBuffer(request: RPCRequest): RPCResponse {
         vscode.commands.executeCommand('workbench.action.files.revert', document.uri)
             .then(() => {
                 console.log(`Refreshed buffer: ${filePath}`);
-            }, (err) => {
+            }, (err: unknown) => {
                 console.error(`Failed to refresh buffer: ${err}`);
             });
     }
@@ -186,16 +246,17 @@ function handleRefreshBuffer(request: RPCRequest): RPCResponse {
  * Send a notification message to the user
  */
 function handleSendMessage(request: RPCRequest): RPCResponse {
-    const message = request.params?.message as string;
-    if (!message) {
+    if (!isSendMessageParams(request.params)) {
         return {
             id: request.id,
             error: {
                 code: -32602,
-                message: 'Missing message parameter'
+                message: 'Missing or invalid message parameter'
             }
         };
     }
+
+    const message = request.params.message;
 
     // Show warning message (similar to Neovim's vim.notify with WARN level)
     vscode.window.showWarningMessage(`Sidekick: ${message}`);
@@ -267,7 +328,8 @@ function resolveFilePath(filePath: string): string {
     }
 
     // Relative path - resolve against workspace folder
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const workspaceFolder = workspaceFolders?.[0];
     if (workspaceFolder) {
         const absolutePath = path.join(workspaceFolder.uri.fsPath, filePath);
         try {
@@ -279,3 +341,11 @@ function resolveFilePath(filePath: string): string {
 
     return filePath;
 }
+
+// Export for testing
+export const _testing = {
+    isBufferStatusParams,
+    isRefreshBufferParams,
+    isSendMessageParams,
+    resolveFilePath
+};
