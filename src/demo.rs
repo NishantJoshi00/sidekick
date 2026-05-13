@@ -46,13 +46,13 @@ struct CastEvent {
 }
 
 fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
-    let text = std::str::from_utf8(bytes).context("cast file is not UTF-8")?;
+    let text = std::str::from_utf8(bytes).context("data is corrupted")?;
     let mut lines = text.lines();
-    let header_line = lines.next().context("cast is empty")?;
-    let header: CastHeader = serde_json::from_str(header_line).context("invalid cast header")?;
+    let header_line = lines.next().context("demo is empty")?;
+    let header: CastHeader = serde_json::from_str(header_line).context("header is malformed")?;
     if header.version != 2 {
         return Err(anyhow!(
-            "unsupported cast version: {} (only v2 is supported)",
+            "unsupported version {} (need v2)",
             header.version
         ));
     }
@@ -61,7 +61,7 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
         if line.trim().is_empty() {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(line).context("invalid cast event")?;
+        let value: serde_json::Value = serde_json::from_str(line).context("frame is malformed")?;
         let Some(arr) = value.as_array() else {
             continue;
         };
@@ -90,7 +90,7 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let cast = parse_cast(DEMO_CAST).context("failed to parse bundled demo cast")?;
+    let cast = parse_cast(DEMO_CAST).context("couldn't load demo")?;
 
     let (term_cols, term_rows) = ratatui::crossterm::terminal::size()?;
 
@@ -507,19 +507,16 @@ fn print_aspect_mismatch_error(
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
-    let term_ratio = have_w as f64 / have_h as f64;
-    let cast_ratio = cast_w as f64 / cast_h as f64;
-
     eprintln!();
     eprintln!("  {cyan}▌{reset} {bold}sidekick demo{reset}  {dim}⏹ can't play{reset}");
     eprintln!();
     eprintln!("    {red}⚠{reset}  {bold}Your terminal is the wrong shape for this demo.{reset}");
     eprintln!();
     eprintln!(
-        "        {dim}your terminal:{reset}   {bold}{have_w}×{have_h}{reset}   {dim}(ratio {term_ratio:.2}){reset}"
+        "        {dim}your terminal:{reset}   {bold}{have_w}×{have_h}{reset}"
     );
     eprintln!(
-        "        {dim}recording:{reset}       {bold}{cast_w}×{cast_h}{reset}   {dim}(ratio {cast_ratio:.2}){reset}"
+        "        {dim}demo:{reset}            {bold}{cast_w}×{cast_h}{reset}"
     );
     eprintln!();
     eprintln!(

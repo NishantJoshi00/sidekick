@@ -54,7 +54,7 @@ impl Action for NeovimAction {
         if any_success {
             Ok(())
         } else {
-            anyhow::bail!("Failed to refresh buffer in any Neovim instance")
+            anyhow::bail!("couldn't refresh Neovim")
         }
     }
 
@@ -63,13 +63,13 @@ impl Action for NeovimAction {
         let any_success = connection::for_each_instance(&self.socket_paths, |nvim| {
             nvim.execute_lua(&lua_code, vec![])
                 .map(|_| ())
-                .map_err(|e| anyhow::anyhow!("Failed to send message to Neovim: {}", e))
+                .map_err(|e| anyhow::anyhow!("couldn't send to Neovim: {}", e))
         });
 
         if any_success {
             Ok(())
         } else {
-            anyhow::bail!("Failed to send message to any Neovim instance")
+            anyhow::bail!("couldn't send to Neovim")
         }
     }
 

@@ -19,7 +19,7 @@ use analytics::{TimeRange, aggregate};
 
 #[derive(Parser)]
 #[command(name = "sidekick")]
-#[command(about = "Claude Code hook handler and Neovim integration", long_about = None)]
+#[command(about = "Protects your unsaved Neovim work from Claude Code.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -27,9 +27,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Handle Claude Code hooks
+    /// Run as a Claude Code hook
     Hook,
-    /// Launch Neovim with a socket based on current directory
+    /// Launch Neovim with sidekick wired in
     Neovim {
         /// Arguments to pass to Neovim
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -40,17 +40,17 @@ enum Commands {
         /// Time window to summarize.
         #[arg(long, value_enum, default_value_t = StatsRange::Week)]
         range: StatsRange,
-        /// Disable ANSI color codes (useful for piping).
+        /// Disable colors.
         #[arg(long)]
         no_color: bool,
     },
-    /// Verify sidekick is installed and wired up correctly.
+    /// Check that sidekick is installed and wired up.
     Doctor {
-        /// Disable ANSI color codes (useful for piping).
+        /// Disable colors.
         #[arg(long)]
         no_color: bool,
     },
-    /// Play the bundled demo inside a media-player TUI.
+    /// Play a short demo of sidekick.
     Demo,
 }
 
@@ -103,7 +103,7 @@ fn handle_neovim(args: Vec<String>) -> anyhow::Result<()> {
     let err = cmd.exec();
 
     // If exec returns, it failed
-    Err(anyhow::anyhow!("Failed to execute nvim: {}", err))
+    Err(anyhow::anyhow!("couldn't launch nvim: {}", err))
 }
 
 fn handle_stats(range: StatsRange, no_color: bool) -> anyhow::Result<()> {

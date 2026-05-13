@@ -36,18 +36,18 @@ fn main() {
     let response = agent
         .get(&url)
         .call()
-        .unwrap_or_else(|err| panic!("failed to fetch demo cast from {url}: {err}"));
+        .unwrap_or_else(|err| panic!("couldn't download demo from {url}: {err}"));
 
     let mut body = Vec::new();
     response
         .into_reader()
         .take(10 * 1024 * 1024) // 10 MiB hard cap, casts are typically <100 KiB
         .read_to_end(&mut body)
-        .expect("failed to read demo cast body");
+        .expect("couldn't read demo response");
 
     if body.is_empty() {
-        panic!("fetched demo cast from {url} is empty");
+        panic!("demo at {url} was empty");
     }
 
-    fs::write(&dest, &body).expect("failed to write demo cast to OUT_DIR");
+    fs::write(&dest, &body).expect("couldn't write demo to OUT_DIR");
 }

@@ -91,19 +91,19 @@ fn build_rows() -> Vec<Row> {
             skipped: false,
         },
         Row {
-            pending_label: "Shell alias",
+            pending_label: "nvim alias",
             run: check_shell_alias,
             result: None,
             skipped: false,
         },
         Row {
-            pending_label: "Neovim sockets for this directory",
+            pending_label: "Neovim sockets opened here",
             run: check_sockets,
             result: None,
             skipped: false,
         },
         Row {
-            pending_label: "Last hook fired",
+            pending_label: "last activity",
             run: check_last_hook,
             result: None,
             skipped: false,
@@ -319,7 +319,7 @@ fn check_claude_hook() -> Check {
             status: Status::Fail {
                 remedy: vec![
                     "Install the plugin:  /plugin install sidekick@nishant-plugins".into(),
-                    "Or add `sidekick hook` to ~/.claude/settings.json (see README).".into(),
+                    "Or add `sidekick hook` to ~/.claude/settings.json".into(),
                 ],
             },
         }
@@ -340,8 +340,8 @@ fn check_claude_hook() -> Check {
 fn check_shell_alias() -> Check {
     let Ok(shell) = std::env::var("SHELL") else {
         return Check {
-            label: "Shell alias: $SHELL is not set".into(),
-            detail: Some("Run `type nvim` manually; expected: alias for `sidekick neovim`".into()),
+            label: "nvim alias: $SHELL is not set".into(),
+            detail: None,
             status: Status::Info,
         };
     };
@@ -362,7 +362,7 @@ fn check_shell_alias() -> Check {
             let stdout = String::from_utf8_lossy(&out.stdout);
             if stdout.contains("sidekick neovim") {
                 Check {
-                    label: format!("Shell alias: nvim → sidekick neovim ({shell_name})"),
+                    label: format!("nvim alias: nvim → sidekick neovim ({shell_name})"),
                     detail: None,
                     status: Status::Pass,
                 }
@@ -370,18 +370,18 @@ fn check_shell_alias() -> Check {
                 let current =
                     first_meaningful_line(&stdout).unwrap_or_else(|| "(no output)".to_string());
                 Check {
-                    label: format!("Shell alias not set ({shell_name})"),
+                    label: format!("nvim alias not set ({shell_name})"),
                     detail: Some(format!("`type nvim` → {current}")),
                     status: Status::Fail {
                         remedy: vec![format!(
-                            "Add to your {shell_name} rc:  alias nvim='sidekick neovim'"
+                            "Add to your {shell_name} config:  alias nvim='sidekick neovim'"
                         )],
                     },
                 }
             }
         }
         Err(e) => Check {
-            label: format!("Shell alias: failed to invoke {shell_name}"),
+            label: format!("nvim alias: couldn't run {shell_name}"),
             detail: Some(e.to_string()),
             status: Status::Info,
         },
@@ -405,7 +405,7 @@ fn check_sockets() -> Check {
                 .join("\n");
             Check {
                 label: format!(
-                    "{count} Neovim socket{} for this directory",
+                    "{count} Neovim socket{} opened here",
                     if count == 1 { "" } else { "s" }
                 ),
                 detail: Some(detail),
@@ -413,7 +413,7 @@ fn check_sockets() -> Check {
             }
         }
         _ => Check {
-            label: "No Neovim instance open in this directory right now".into(),
+            label: "no Neovim opened here".into(),
             detail: None,
             status: Status::Info,
         },
@@ -439,22 +439,22 @@ fn check_last_hook() -> Check {
                 ToolKind::MultiEdit => "MultiEdit",
             };
             let decision = match d.decision {
-                Decision::Allow => "Allow",
-                Decision::Deny => "Deny",
+                Decision::Allow => "allowed",
+                Decision::Deny => "blocked",
             };
             let file = Path::new(&d.file)
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| d.file.clone());
             Check {
-                label: format!("Last hook fired: {when}"),
+                label: format!("last activity: {when}"),
                 detail: Some(format!("{decision} · {tool} · {file}")),
                 status: Status::Info,
             }
         }
         None => Check {
-            label: "Last hook fired: never".into(),
-            detail: Some("Fire one by asking Claude to edit a file.".into()),
+            label: "last activity: never".into(),
+            detail: Some("Ask Claude to edit a file to see one.".into()),
             status: Status::Info,
         },
     }

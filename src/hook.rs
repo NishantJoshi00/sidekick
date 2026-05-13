@@ -90,20 +90,20 @@ pub struct BashToolInput {
 
 pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
     // First, peek at the hook_event_name to determine which struct to parse
-    let value: serde_json::Value = serde_json::from_str(input).context("Invalid JSON")?;
+    let value: serde_json::Value = serde_json::from_str(input).context("couldn't parse hook input")?;
     let event_name = value
         .get("hook_event_name")
         .and_then(|v| v.as_str())
-        .context("Missing hook_event_name")?;
+        .context("hook is missing event name")?;
 
     match event_name {
         "UserPromptSubmit" => Ok(Hook::UserPrompt),
         "PreToolUse" | "PostToolUse" => {
-            let hook: ToolHook = serde_json::from_str(input).context("Invalid tool hook")?;
+            let hook: ToolHook = serde_json::from_str(input).context("unrecognized tool in hook")?;
             Ok(Hook::Tool(hook))
         }
         _ => {
-            anyhow::bail!("Invalid hook received")
+            anyhow::bail!("unrecognized hook event")
         }
     }
 }
@@ -224,13 +224,13 @@ impl HookOutput {
 
     /// Convert to JSON string
     pub fn to_json(&self) -> anyhow::Result<String> {
-        serde_json::to_string(self).context("Failed to serialize HookOutput")
+        serde_json::to_string(self).context("couldn't serialize hook output")
     }
 
     /// Convert to pretty JSON string
     #[allow(dead_code)]
     pub fn to_json_pretty(&self) -> anyhow::Result<String> {
-        serde_json::to_string_pretty(self).context("Failed to serialize HookOutput")
+        serde_json::to_string_pretty(self).context("couldn't serialize hook output")
     }
 }
 

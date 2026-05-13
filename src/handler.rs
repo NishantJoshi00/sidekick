@@ -172,7 +172,7 @@ fn check_buffer_modifications(
 
     if status.has_unsaved_changes && status.is_current {
         if let Err(e) = action.send_message("Claude tried to edit this file") {
-            eprintln!("Warning: Failed to send message to Neovim: {}", e);
+            eprintln!("Warning: {}", e);
         }
 
         let output = HookOutput::new().with_permission_decision(
@@ -192,7 +192,7 @@ fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOu
     };
 
     if let Err(e) = action.refresh_buffer(file_path) {
-        eprintln!("Warning: Failed to refresh buffer: {}", e);
+        eprintln!("Warning: {}", e);
     }
 
     HookOutput::new()

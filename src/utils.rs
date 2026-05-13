@@ -35,10 +35,10 @@ use std::path::PathBuf;
 
 /// Compute socket path based on current working directory hash and process ID
 pub fn compute_socket_path_with_pid(pid: u32) -> anyhow::Result<PathBuf> {
-    let cwd = env::current_dir().context("Failed to get current working directory")?;
+    let cwd = env::current_dir().context("couldn't read current directory")?;
     let cwd_absolute = cwd
         .canonicalize()
-        .context("Failed to canonicalize current directory")?;
+        .context("couldn't resolve current directory")?;
 
     let hash = blake3::hash(cwd_absolute.to_string_lossy().as_bytes());
     let hash_hex = hash.to_hex();
@@ -48,10 +48,10 @@ pub fn compute_socket_path_with_pid(pid: u32) -> anyhow::Result<PathBuf> {
 
 /// Find all socket paths matching the current working directory hash
 pub fn find_matching_sockets() -> anyhow::Result<Vec<PathBuf>> {
-    let cwd = env::current_dir().context("Failed to get current working directory")?;
+    let cwd = env::current_dir().context("couldn't read current directory")?;
     let cwd_absolute = cwd
         .canonicalize()
-        .context("Failed to canonicalize current directory")?;
+        .context("couldn't resolve current directory")?;
 
     let hash = blake3::hash(cwd_absolute.to_string_lossy().as_bytes());
     let hash_hex = hash.to_hex();
@@ -59,7 +59,7 @@ pub fn find_matching_sockets() -> anyhow::Result<Vec<PathBuf>> {
     let pattern = format!("/tmp/{}-*.sock", hash_hex);
 
     Ok(glob::glob(&pattern)
-        .context("Failed to glob socket pattern")?
+        .context("couldn't search for Neovim sockets")?
         .filter_map(Result::ok)
         .filter(|path| path.exists())
         .collect())

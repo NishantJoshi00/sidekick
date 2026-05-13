@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// Connect to Neovim via Unix socket and return Neovim client
 pub fn connect(socket_path: &PathBuf) -> Result<Neovim> {
     let mut session =
-        Session::new_unix_socket(socket_path).context("Failed to connect to Neovim socket")?;
+        Session::new_unix_socket(socket_path).context("couldn't connect to Neovim")?;
     session.set_timeout(NEOVIM_RPC_TIMEOUT);
     session.start_event_loop();
     Ok(Neovim::new(session))

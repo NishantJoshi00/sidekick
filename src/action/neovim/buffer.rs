@@ -8,14 +8,14 @@ use std::path::PathBuf;
 
 /// Find buffer by file path
 pub fn find_buffer(nvim: &mut Neovim, file_path: &str) -> Result<Buffer> {
-    let buffers = nvim.list_bufs().context("Failed to list buffers")?;
+    let buffers = nvim.list_bufs().context("couldn't list buffers")?;
 
     let target_path = PathBuf::from(file_path)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(file_path));
 
     for buffer in buffers {
-        let buf_name = buffer.get_name(nvim).context("Failed to get buffer name")?;
+        let buf_name = buffer.get_name(nvim).context("couldn't read buffer name")?;
 
         if buf_name.is_empty() {
             continue;
@@ -30,7 +30,7 @@ pub fn find_buffer(nvim: &mut Neovim, file_path: &str) -> Result<Buffer> {
         }
     }
 
-    anyhow::bail!("Buffer not found for file: {}", file_path)
+    anyhow::bail!("file not open in Neovim: {}", file_path)
 }
 
 /// Get buffer status (whether it's current and has unsaved changes)
@@ -57,7 +57,7 @@ pub fn refresh_buffer(nvim: &mut Neovim, file_path: &str) -> Result<()> {
 
     nvim.execute_lua(&lua_code, vec![])
         .map(|_| ())
-        .context("Failed to reload buffer")
+        .context("couldn't reload buffer")
 }
 
 /// Get visual selection from current buffer
@@ -66,14 +66,14 @@ pub fn get_visual_selection(nvim: &mut Neovim) -> Result<Option<EditorContext>> 
 
     let result = nvim
         .execute_lua(lua_code, vec![])
-        .context("Failed to get visual selection")?;
+        .context("couldn't read visual selection")?;
 
     // Lua returns nil if no selection, or a JSON string
     if result.is_nil() {
         return Ok(None);
     }
 
-    let json_str = result.as_str().context("Expected string from Lua")?;
+    let json_str = result.as_str().context("unexpected response from Neovim")?;
 
     #[derive(serde::Deserialize)]
     struct SelectionData {
@@ -84,7 +84,7 @@ pub fn get_visual_selection(nvim: &mut Neovim) -> Result<Option<EditorContext>> 
     }
 
     let data: SelectionData =
-        serde_json::from_str(json_str).context("Failed to parse selection JSON")?;
+        serde_json::from_str(json_str).context("couldn't parse visual selection")?;
 
     Ok(Some(EditorContext {
         file_path: data.file_path,
