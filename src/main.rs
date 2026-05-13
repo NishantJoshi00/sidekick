@@ -7,6 +7,8 @@ use std::process::Command;
 mod action;
 mod analytics;
 mod constants;
+mod demo;
+mod doctor;
 mod handler;
 mod hook;
 mod utils;
@@ -42,6 +44,14 @@ enum Commands {
         #[arg(long)]
         no_color: bool,
     },
+    /// Verify sidekick is installed and wired up correctly.
+    Doctor {
+        /// Disable ANSI color codes (useful for piping).
+        #[arg(long)]
+        no_color: bool,
+    },
+    /// Play the bundled demo inside a media-player TUI.
+    Demo,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -124,6 +134,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Hook => handler::handle_hook()?,
         Commands::Neovim { args } => handle_neovim(args)?,
         Commands::Stats { range, no_color } => handle_stats(range, no_color)?,
+        Commands::Doctor { no_color } => doctor::run(no_color)?,
+        Commands::Demo => demo::run()?,
     }
 
     Ok(())
