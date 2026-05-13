@@ -81,7 +81,7 @@ fn mirror(out: &mut dyn Write, p: &Paint, stats: &Stats) -> anyhow::Result<()> {
         .iter()
         .filter(|f| f.saves > 0 && f.save_buckets.len() == width)
         .collect();
-    by_saves.sort_by(|a, b| b.saves.cmp(&a.saves));
+    by_saves.sort_by_key(|f| std::cmp::Reverse(f.saves));
 
     for (idx, file) in by_saves.iter().take(MAX_FILES).enumerate() {
         // Split this file's saves into two streams by save-index parity, so
