@@ -51,10 +51,7 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
     let header_line = lines.next().context("demo is empty")?;
     let header: CastHeader = serde_json::from_str(header_line).context("header is malformed")?;
     if header.version != 2 {
-        return Err(anyhow!(
-            "unsupported version {} (need v2)",
-            header.version
-        ));
+        return Err(anyhow!("unsupported version {} (need v2)", header.version));
     }
     let mut events = Vec::new();
     for line in lines {
@@ -512,12 +509,8 @@ fn print_aspect_mismatch_error(
     eprintln!();
     eprintln!("    {red}⚠{reset}  {bold}Your terminal is the wrong shape for this demo.{reset}");
     eprintln!();
-    eprintln!(
-        "        {dim}your terminal:{reset}   {bold}{have_w}×{have_h}{reset}"
-    );
-    eprintln!(
-        "        {dim}demo:{reset}            {bold}{cast_w}×{cast_h}{reset}"
-    );
+    eprintln!("        {dim}your terminal:{reset}   {bold}{have_w}×{have_h}{reset}");
+    eprintln!("        {dim}demo:{reset}            {bold}{cast_w}×{cast_h}{reset}");
     eprintln!();
     eprintln!(
         "    {dim}Widen to at least{reset} {bold}{min_cols}{reset} {dim}cols{reset}{dim}, or shorten to{reset} {bold}{max_rows}{reset} {dim}rows.{reset}"

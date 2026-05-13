@@ -90,7 +90,8 @@ pub struct BashToolInput {
 
 pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
     // First, peek at the hook_event_name to determine which struct to parse
-    let value: serde_json::Value = serde_json::from_str(input).context("couldn't parse hook input")?;
+    let value: serde_json::Value =
+        serde_json::from_str(input).context("couldn't parse hook input")?;
     let event_name = value
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -99,7 +100,8 @@ pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
     match event_name {
         "UserPromptSubmit" => Ok(Hook::UserPrompt),
         "PreToolUse" | "PostToolUse" => {
-            let hook: ToolHook = serde_json::from_str(input).context("unrecognized tool in hook")?;
+            let hook: ToolHook =
+                serde_json::from_str(input).context("unrecognized tool in hook")?;
             Ok(Hook::Tool(hook))
         }
         _ => {
