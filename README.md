@@ -6,7 +6,7 @@
 
 [![asciicast](https://asciinema.org/a/746395.svg)](https://asciinema.org/a/746395?t=80)
 
-*Skip to 1:20 to see a block. After install, run `sidekick demo` to replay this in your own terminal.*
+*Skip to 1:20 to see a block. The same recording is bundled in the binary — run `sidekick demo` after install to play it back offline.*
 
 ---
 
