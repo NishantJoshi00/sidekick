@@ -21,6 +21,11 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 const FRAMES_PER_CHECK: u32 = 3;
 const FRAME_DELAY: Duration = Duration::from_millis(70);
 
+// Brand accents (truecolor ANSI params) for the AI-integration rows, applied
+// to the label only when that integration is configured correctly.
+const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
+const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
+
 enum Status {
     Pass,
     Fail { remedy: Vec<String> },
@@ -38,6 +43,10 @@ struct Row {
     run: fn() -> Check,
     result: Option<Check>,
     skipped: bool,
+    /// Truecolor ANSI params for the label, applied only when the check passes.
+    accent: Option<&'static str>,
+    /// A prerequisite failure halts the cascade; other failures don't.
+    prerequisite: bool,
 }
 
 impl Row {
@@ -49,6 +58,12 @@ impl Row {
                 ..
             })
         )
+    }
+
+    /// A failed prerequisite (e.g. missing `nvim`) makes the rest moot, so the
+    /// remaining rows are skipped. A failed integration check does not.
+    fn halts_cascade(&self) -> bool {
+        self.prerequisite && self.is_failed()
     }
 }
 
@@ -70,51 +85,57 @@ pub fn run(no_color: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn row(
+    pending_label: &'static str,
+    run: fn() -> Check,
+    accent: Option<&'static str>,
+    prerequisite: bool,
+) -> Row {
+    Row {
+        pending_label,
+        run,
+        result: None,
+        skipped: false,
+        accent,
+        prerequisite,
+    }
+}
+
+/// The discovery step runs first; the per-harness rows below it are built only
+/// for the AI harnesses actually present, so an absent harness gets no row.
 fn build_rows() -> Vec<Row> {
-    vec![
-        Row {
-            pending_label: "sidekick version",
-            run: check_version,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "nvim on PATH",
-            run: check_nvim_on_path,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "Claude Code hook registered",
-            run: check_claude_hook,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "opencode plugin",
-            run: check_opencode_plugin,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "nvim alias",
-            run: check_shell_alias,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "Neovim sockets opened here",
-            run: check_sockets,
-            result: None,
-            skipped: false,
-        },
-        Row {
-            pending_label: "last activity",
-            run: check_last_hook,
-            result: None,
-            skipped: false,
-        },
-    ]
+    let mut rows = vec![
+        row("sidekick version", check_version, None, false),
+        row("nvim on PATH", check_nvim_on_path, None, true),
+        row("AI harnesses", check_harnesses, None, false),
+    ];
+
+    if uses_claude_code() {
+        rows.push(row(
+            "Claude Code hook registered",
+            check_claude_hook,
+            Some(CLAUDE_ACCENT),
+            false,
+        ));
+    }
+    if uses_opencode() {
+        rows.push(row(
+            "opencode plugin",
+            check_opencode_plugin,
+            Some(OPENCODE_ACCENT),
+            false,
+        ));
+    }
+
+    rows.push(row("nvim alias", check_shell_alias, None, false));
+    rows.push(row(
+        "Neovim sockets opened here",
+        check_sockets,
+        None,
+        false,
+    ));
+    rows.push(row("last activity", check_last_hook, None, false));
+    rows
 }
 
 fn animate(theme: &Theme, rows: &mut [Row]) -> io::Result<()> {
@@ -148,7 +169,7 @@ fn animate_inner(
 
         rows[i].result = Some((rows[i].run)());
 
-        if rows[i].is_failed() {
+        if rows[i].halts_cascade() {
             for row in rows.iter_mut().skip(i + 1) {
                 row.skipped = true;
             }
@@ -184,7 +205,7 @@ fn run_static(rows: &mut [Row]) {
             continue;
         }
         row.result = Some((row.run)());
-        if row.is_failed() {
+        if row.halts_cascade() {
             failed = true;
         }
     }
@@ -234,7 +255,11 @@ fn render_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
                 Status::Fail { .. } => theme.red("✗"),
                 Status::Info => theme.dim("·"),
             };
-            let mut out = vec![format!("  {marker} {}", check.label)];
+            let label = match (&check.status, row.accent) {
+                (Status::Pass, Some(code)) => theme.wrap(code, &check.label),
+                _ => check.label.clone(),
+            };
+            let mut out = vec![format!("  {marker} {label}")];
             if let Some(detail) = &check.detail {
                 for line in detail.lines() {
                     out.push(format!("      {}", theme.dim(line)));
@@ -293,6 +318,37 @@ fn check_nvim_on_path() -> Check {
     }
 }
 
+/// Discover which AI harnesses are present. Drives both this row's summary and
+/// (via the same `uses_*` checks) which per-harness rows get built at all.
+fn check_harnesses() -> Check {
+    let mut found: Vec<&str> = Vec::new();
+    if uses_claude_code() {
+        found.push("Claude Code");
+    }
+    if uses_opencode() {
+        found.push("opencode");
+    }
+
+    if found.is_empty() {
+        Check {
+            label: "no AI harness found".into(),
+            detail: None,
+            status: Status::Fail {
+                remedy: vec![
+                    "Install Claude Code or opencode — sidekick has nothing to guard without one"
+                        .into(),
+                ],
+            },
+        }
+    } else {
+        Check {
+            label: format!("AI harnesses: {}", found.join(", ")),
+            detail: None,
+            status: Status::Info,
+        }
+    }
+}
+
 fn check_claude_hook() -> Check {
     let mut matched: Vec<PathBuf> = Vec::new();
 
@@ -318,28 +374,28 @@ fn check_claude_hook() -> Check {
     matched.sort();
     matched.dedup();
 
-    if matched.is_empty() {
-        Check {
-            label: "Claude Code hook not registered".into(),
-            detail: None,
-            status: Status::Fail {
-                remedy: vec![
-                    "Install the plugin:  /plugin install sidekick@nishant-plugins".into(),
-                    "Or add `sidekick hook` to ~/.claude/settings.json".into(),
-                ],
-            },
-        }
-    } else {
+    if !matched.is_empty() {
         let detail = matched
             .iter()
             .map(|p| display_path(p))
             .collect::<Vec<_>>()
             .join("\n");
-        Check {
+        return Check {
             label: "Claude Code hook registered".into(),
             detail: Some(detail),
             status: Status::Pass,
-        }
+        };
+    }
+
+    Check {
+        label: "Claude Code hook not registered".into(),
+        detail: None,
+        status: Status::Fail {
+            remedy: vec![
+                "Install the plugin:  /plugin install sidekick@nishant-plugins".into(),
+                "Or add `sidekick hook` to ~/.claude/settings.json".into(),
+            ],
+        },
     }
 }
 
@@ -369,26 +425,51 @@ fn check_opencode_plugin() -> Check {
     matched.sort();
     matched.dedup();
 
-    if matched.is_empty() {
-        Check {
-            label: "opencode plugin not installed".into(),
-            detail: Some(
-                "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
-            ),
-            status: Status::Info,
-        }
-    } else {
+    if !matched.is_empty() {
         let detail = matched
             .iter()
             .map(|p| display_path(p))
             .collect::<Vec<_>>()
             .join("\n");
-        Check {
+        return Check {
             label: "opencode plugin installed".into(),
             detail: Some(detail),
             status: Status::Pass,
-        }
+        };
     }
+
+    Check {
+        label: "opencode plugin not installed".into(),
+        detail: None,
+        status: Status::Fail {
+            remedy: vec![
+                "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
+            ],
+        },
+    }
+}
+
+/// Whether an executable of this name is on `$PATH`.
+fn binary_on_path(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+        .unwrap_or(false)
+}
+
+/// Whether this machine looks like a Claude Code user.
+fn uses_claude_code() -> bool {
+    binary_on_path("claude")
+        || dirs::home_dir()
+            .map(|h| h.join(".claude").is_dir())
+            .unwrap_or(false)
+}
+
+/// Whether this machine looks like an opencode user.
+fn uses_opencode() -> bool {
+    binary_on_path("opencode")
+        || dirs::home_dir()
+            .map(|h| h.join(".config").join("opencode").is_dir())
+            .unwrap_or(false)
 }
 
 fn check_shell_alias() -> Check {
