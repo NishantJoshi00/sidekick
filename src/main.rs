@@ -9,6 +9,7 @@ mod analytics;
 mod constants;
 mod demo;
 mod doctor;
+mod fix;
 mod handler;
 mod hook;
 mod utils;
@@ -49,6 +50,9 @@ enum Commands {
         /// Disable colors.
         #[arg(long)]
         no_color: bool,
+        /// Walk through fixes for whatever is misconfigured.
+        #[arg(long)]
+        fix: bool,
     },
     /// Play a short demo of sidekick.
     Demo,
@@ -134,7 +138,14 @@ fn main() -> anyhow::Result<()> {
         Commands::Hook => handler::handle_hook()?,
         Commands::Neovim { args } => handle_neovim(args)?,
         Commands::Stats { range, no_color } => handle_stats(range, no_color)?,
-        Commands::Doctor { no_color } => doctor::run(no_color)?,
+        Commands::Doctor { no_color, fix } => {
+            let any_failed = doctor::run(no_color, fix)?;
+            if fix {
+                fix::run(no_color, any_failed)?;
+            } else if any_failed {
+                std::process::exit(1);
+            }
+        }
         Commands::Demo => demo::run()?,
     }
 

@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sidekick hook"
+          }
+        ]
+      }
     ]
   }
 }

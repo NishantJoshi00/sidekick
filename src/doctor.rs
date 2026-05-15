@@ -67,7 +67,9 @@ impl Row {
     }
 }
 
-pub fn run(no_color: bool) -> anyhow::Result<()> {
+/// Runs every check and renders the report. Returns whether anything failed —
+/// the caller owns the exit code, so `--fix` can run before the process ends.
+pub fn run(no_color: bool, fix: bool) -> anyhow::Result<bool> {
     let theme = Theme::new(!no_color);
     let mut rows = build_rows();
 
@@ -79,10 +81,21 @@ pub fn run(no_color: bool) -> anyhow::Result<()> {
         render_block_to(&mut stdout, &theme, &rows, 0)?;
     }
 
-    if rows.iter().any(Row::is_failed) {
-        std::process::exit(1);
+    let any_failed = rows.iter().any(Row::is_failed);
+
+    // When something's wrong, point at --fix — unless --fix is already running.
+    if any_failed && !fix {
+        let mut stdout = io::stdout().lock();
+        writeln!(
+            stdout,
+            "  {}sidekick doctor --fix{}",
+            theme.dim("Run "),
+            theme.dim(" to fix the issues above.")
+        )?;
+        writeln!(stdout)?;
     }
-    Ok(())
+
+    Ok(any_failed)
 }
 
 fn row(
@@ -349,7 +362,8 @@ fn check_harnesses() -> Check {
     }
 }
 
-fn check_claude_hook() -> Check {
+/// Config files that already wire up `sidekick hook` for Claude Code.
+pub(crate) fn claude_hook_files() -> Vec<PathBuf> {
     let mut matched: Vec<PathBuf> = Vec::new();
 
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -373,6 +387,11 @@ fn check_claude_hook() -> Check {
 
     matched.sort();
     matched.dedup();
+    matched
+}
+
+fn check_claude_hook() -> Check {
+    let matched = claude_hook_files();
 
     if !matched.is_empty() {
         let detail = matched
@@ -399,7 +418,8 @@ fn check_claude_hook() -> Check {
     }
 }
 
-fn check_opencode_plugin() -> Check {
+/// Plugin files that already wire up sidekick for opencode.
+pub(crate) fn opencode_plugin_files() -> Vec<PathBuf> {
     let mut matched: Vec<PathBuf> = Vec::new();
 
     // opencode globs `{plugin,plugins}/*.{ts,js}` under its global config dir
@@ -424,28 +444,50 @@ fn check_opencode_plugin() -> Check {
 
     matched.sort();
     matched.dedup();
+    matched
+}
 
-    if !matched.is_empty() {
-        let detail = matched
-            .iter()
-            .map(|p| display_path(p))
-            .collect::<Vec<_>>()
-            .join("\n");
+fn check_opencode_plugin() -> Check {
+    let matched = opencode_plugin_files();
+
+    if matched.is_empty() {
         return Check {
-            label: "opencode plugin installed".into(),
-            detail: Some(detail),
-            status: Status::Pass,
+            label: "opencode plugin not installed".into(),
+            detail: None,
+            status: Status::Fail {
+                remedy: vec![
+                    "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
+                ],
+            },
         };
     }
 
-    Check {
-        label: "opencode plugin not installed".into(),
-        detail: None,
-        status: Status::Fail {
-            remedy: vec![
-                "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
-            ],
-        },
+    let detail = matched
+        .iter()
+        .map(|p| display_path(p))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Presence isn't enough — a stale or hand-edited plugin is missing fixes.
+    // The binary embeds the canonical plugin, so compare byte-for-byte.
+    let all_current = matched.iter().all(|p| {
+        std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::OPENCODE_PLUGIN_SRC)
+    });
+
+    if all_current {
+        Check {
+            label: "opencode plugin installed".into(),
+            detail: Some(detail),
+            status: Status::Pass,
+        }
+    } else {
+        Check {
+            label: "opencode plugin out of sync".into(),
+            detail: Some(detail),
+            status: Status::Fail {
+                remedy: vec!["The installed plugin differs from this sidekick build.".into()],
+            },
+        }
     }
 }
 
@@ -457,15 +499,44 @@ fn binary_on_path(name: &str) -> bool {
 }
 
 /// Whether this machine looks like a Claude Code user.
-fn uses_claude_code() -> bool {
+pub(crate) fn uses_claude_code() -> bool {
     binary_on_path("claude")
         || dirs::home_dir()
             .map(|h| h.join(".claude").is_dir())
             .unwrap_or(false)
 }
 
+#[derive(PartialEq)]
+pub(crate) enum AliasStatus {
+    Active,
+    Missing,
+    Unknown,
+}
+
+/// Runtime check of whether `nvim` resolves to `sidekick neovim` in the login
+/// shell — the same probe `check_shell_alias` renders, shared so `--fix` never
+/// offers an alias that's already live.
+pub(crate) fn nvim_alias_status() -> AliasStatus {
+    let Ok(shell) = std::env::var("SHELL") else {
+        return AliasStatus::Unknown;
+    };
+    match Command::new(&shell)
+        .args(["-i", "-c", "type nvim"])
+        .output()
+    {
+        Ok(out) => {
+            if String::from_utf8_lossy(&out.stdout).contains("sidekick neovim") {
+                AliasStatus::Active
+            } else {
+                AliasStatus::Missing
+            }
+        }
+        Err(_) => AliasStatus::Unknown,
+    }
+}
+
 /// Whether this machine looks like an opencode user.
-fn uses_opencode() -> bool {
+pub(crate) fn uses_opencode() -> bool {
     binary_on_path("opencode")
         || dirs::home_dir()
             .map(|h| h.join(".config").join("opencode").is_dir())
@@ -633,7 +704,7 @@ fn walk_for_json_mentioning_hook(dir: &Path, matched: &mut Vec<PathBuf>, depth: 
     }
 }
 
-fn display_path(p: &Path) -> String {
+pub(crate) fn display_path(p: &Path) -> String {
     if let Some(home) = dirs::home_dir()
         && let Ok(rel) = p.strip_prefix(&home)
     {
@@ -642,34 +713,34 @@ fn display_path(p: &Path) -> String {
     p.display().to_string()
 }
 
-struct Theme {
+pub(crate) struct Theme {
     color: bool,
 }
 
 impl Theme {
-    fn new(color: bool) -> Self {
+    pub(crate) fn new(color: bool) -> Self {
         Self { color }
     }
-    fn wrap(&self, code: &str, s: &str) -> String {
+    pub(crate) fn wrap(&self, code: &str, s: &str) -> String {
         if self.color {
             format!("\x1b[{code}m{s}\x1b[0m")
         } else {
             s.to_string()
         }
     }
-    fn green(&self, s: &str) -> String {
+    pub(crate) fn green(&self, s: &str) -> String {
         self.wrap("32", s)
     }
-    fn red(&self, s: &str) -> String {
+    pub(crate) fn red(&self, s: &str) -> String {
         self.wrap("31", s)
     }
-    fn cyan(&self, s: &str) -> String {
+    pub(crate) fn cyan(&self, s: &str) -> String {
         self.wrap("36", s)
     }
-    fn dim(&self, s: &str) -> String {
+    pub(crate) fn dim(&self, s: &str) -> String {
         self.wrap("2", s)
     }
-    fn bold(&self, s: &str) -> String {
+    pub(crate) fn bold(&self, s: &str) -> String {
         self.wrap("1", s)
     }
 }
