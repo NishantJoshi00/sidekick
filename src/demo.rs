@@ -30,8 +30,17 @@ const FRAME_POLL: Duration = Duration::from_millis(33); // ~30fps
 #[derive(Deserialize)]
 struct CastHeader {
     version: u8,
-    width: u16,
-    height: u16,
+    // asciicast v2 puts terminal dimensions at the top level...
+    width: Option<u16>,
+    height: Option<u16>,
+    // ...asciicast v3 nests them under `term`.
+    term: Option<CastTerm>,
+}
+
+#[derive(Deserialize)]
+struct CastTerm {
+    cols: u16,
+    rows: u16,
 }
 
 struct Cast {
@@ -50,9 +59,22 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
     let mut lines = text.lines();
     let header_line = lines.next().context("demo is empty")?;
     let header: CastHeader = serde_json::from_str(header_line).context("header is malformed")?;
-    if header.version != 2 {
-        return Err(anyhow!("unsupported version {} (need v2)", header.version));
+    if header.version != 2 && header.version != 3 {
+        return Err(anyhow!(
+            "unsupported version {} (need v2 or v3)",
+            header.version
+        ));
     }
+    let (width, height) = match (header.width, header.height, &header.term) {
+        (Some(w), Some(h), _) => (w, h),
+        (_, _, Some(term)) => (term.cols, term.rows),
+        _ => return Err(anyhow!("header missing terminal dimensions")),
+    };
+
+    // asciicast v2 event times are absolute; v3 times are intervals since
+    // the previous event. Accumulate v3 intervals into an absolute timeline.
+    let v3_intervals = header.version == 3;
+    let mut clock = 0.0f64;
     let mut events = Vec::new();
     for line in lines {
         if line.trim().is_empty() {
@@ -68,6 +90,14 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
         let Some(time) = arr[0].as_f64() else {
             continue;
         };
+        // Accumulate before the "o" filter so skipped events (e.g. a
+        // trailing "x" exit marker) don't desync the v3 clock.
+        let abs_time = if v3_intervals {
+            clock += time;
+            clock
+        } else {
+            time
+        };
         if arr[1].as_str() != Some("o") {
             continue;
         }
@@ -75,13 +105,13 @@ fn parse_cast(bytes: &[u8]) -> anyhow::Result<Cast> {
             continue;
         };
         events.push(CastEvent {
-            time,
+            time: abs_time,
             data: data.to_string(),
         });
     }
     Ok(Cast {
-        width: header.width,
-        height: header.height,
+        width,
+        height,
         events,
     })
 }

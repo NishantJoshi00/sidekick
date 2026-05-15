@@ -17,7 +17,7 @@ use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-const DEFAULT_DEMO_CAST_URL: &str = "https://asciinema.org/a/746395.cast";
+const DEFAULT_DEMO_CAST_URL: &str = "https://asciinema.org/a/1060712.cast";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
