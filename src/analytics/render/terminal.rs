@@ -1,7 +1,7 @@
 //! Terminal renderer — "The Mirror".
 //!
 //! The screen is a duet (or duel, depending on the week) between you and
-//! Claude. Two sparklines straddle a row of save-dots. Where the lines spike
+//! the AI. Two sparklines straddle a row of save-dots. Where the lines spike
 //! together, the dots cluster — those are the moments sidekick caught.
 //!
 //! Below the picture, two rotating prose lines and sometimes a third meta
@@ -27,7 +27,7 @@ impl Renderer for TerminalRenderer {
     fn render(&self, stats: &Stats, out: &mut dyn Write) -> anyhow::Result<()> {
         let p = Paint::new(self.color);
 
-        if stats.you_buckets.iter().all(|&v| v == 0) && stats.claude_buckets.iter().all(|&v| v == 0)
+        if stats.you_buckets.iter().all(|&v| v == 0) && stats.ai_buckets.iter().all(|&v| v == 0)
         {
             return render_empty(out, &p);
         }
@@ -318,7 +318,7 @@ fn headline(stats: &Stats) -> Option<String> {
     let saves = stats.saves;
     let attempts = stats.total_decisions;
     if attempts == 0 {
-        return Some("quiet stretch. claude barely came calling.".to_string());
+        return Some("quiet stretch. the AI barely came calling.".to_string());
     }
     let p = Paint::new(true);
     let s = p.accent_strong(&saves.to_string());
@@ -331,12 +331,12 @@ fn headline(stats: &Stats) -> Option<String> {
             "{s} times this {span}, you both reached for the same file.",
             span = span_word(stats)
         ),
-        1 => format!("{s} of claude's {a} attempts landed on what you were typing."),
+        1 => format!("{s} of the AI's {a} attempts landed on what you were typing."),
         2 => format!(
-            "you held the line {s} times. the other {} edits, claude moved freely.",
+            "you held the line {s} times. the other {} edits, the AI moved freely.",
             attempts - saves
         ),
-        3 => format!("claude reached {a} times. you were there for {s} of them."),
+        3 => format!("the AI reached {a} times. you were there for {s} of them."),
         _ => format!("{a} attempts, {s} crossings. the rest, you weren't in the room."),
     })
 }
@@ -401,7 +401,7 @@ fn detail(stats: &Stats, p: &Paint) -> Option<String> {
             ),
             format!("one file kept calling for help: {short}."),
             format!(
-                "{} edits attempted on {short}. claude couldn't stay away.",
+                "{} edits attempted on {short}. the AI couldn't stay away.",
                 total
             ),
         ];

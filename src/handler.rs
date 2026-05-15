@@ -2,8 +2,9 @@
 //!
 //! Reads a Claude-Code-shaped JSON envelope from stdin, decides allow/deny,
 //! and writes the response JSON to stdout. The same protocol is also driven
-//! by the opencode plugin under `plugins/opencode/`, which translates
-//! opencode's `tool.execute.before`/`.after` events into this envelope.
+//! by the bridges under `plugins/` — the opencode plugin and the pi
+//! extension — which translate their host's tool and prompt events into
+//! this envelope.
 //!
 //! # Hook Flow
 //!
@@ -24,7 +25,7 @@
 //! ```no_run
 //! use sidekick::handler;
 //!
-//! // Called by Claude Code (or the opencode plugin) via stdin/stdout
+//! // Called by Claude Code (or the opencode/pi bridges) via stdin/stdout
 //! handler::handle_hook().expect("Failed to process hook");
 //! ```
 

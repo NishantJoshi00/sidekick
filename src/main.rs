@@ -36,7 +36,7 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Show your sidekick story — what Claude did, what got caught.
+    /// Show your sidekick story — what the AI did, what got caught.
     Stats {
         /// Time window to summarize.
         #[arg(long, value_enum, default_value_t = StatsRange::Week)]

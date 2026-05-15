@@ -23,7 +23,7 @@ This isn't a limitation — it's how productive human-AI collaboration should wo
 
 ## Roadmap
 
-Sidekick currently supports Neovim + Claude Code + opencode. The vision is broader.
+Sidekick currently supports Neovim + Claude Code + opencode + pi. The vision is broader.
 
 ### Phase 1: More AI Tools
 
@@ -33,7 +33,7 @@ Extend protection to other in-terminal AI coding assistants:
 - Goose
 - Other CLI-based AI tools with hook/plugin systems
 
-The pattern is the same: intercept file modification requests, check editor state, allow or block. The opencode plugin in [`plugins/opencode/`](plugins/opencode/) is the reference for how to bridge a JS-plugin-style AI tool to the `sidekick hook` protocol.
+The pattern is the same: intercept file modification requests, check editor state, allow or block. The bridges in [`plugins/`](plugins/) are the reference for wiring a plugin- or extension-based AI tool to the `sidekick hook` protocol — opencode for a JS plugin system, pi for a TypeScript extension system.
 
 ### Phase 2: More Editors
 

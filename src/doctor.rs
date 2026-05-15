@@ -25,6 +25,7 @@ const FRAME_DELAY: Duration = Duration::from_millis(70);
 // to the label only when that integration is configured correctly.
 const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
 const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
+const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
 
 enum Status {
     Pass,
@@ -136,6 +137,14 @@ fn build_rows() -> Vec<Row> {
             "opencode plugin",
             check_opencode_plugin,
             Some(OPENCODE_ACCENT),
+            false,
+        ));
+    }
+    if uses_pi() {
+        rows.push(row(
+            "pi extension",
+            check_pi_extension,
+            Some(PI_ACCENT),
             false,
         ));
     }
@@ -341,6 +350,9 @@ fn check_harnesses() -> Check {
     if uses_opencode() {
         found.push("opencode");
     }
+    if uses_pi() {
+        found.push("pi");
+    }
 
     if found.is_empty() {
         Check {
@@ -348,7 +360,7 @@ fn check_harnesses() -> Check {
             detail: None,
             status: Status::Fail {
                 remedy: vec![
-                    "Install Claude Code or opencode — sidekick has nothing to guard without one"
+                    "Install Claude Code, opencode, or pi — sidekick has nothing to guard without one"
                         .into(),
                 ],
             },
@@ -491,6 +503,52 @@ fn check_opencode_plugin() -> Check {
     }
 }
 
+fn check_pi_extension() -> Check {
+    let mut matched: Vec<PathBuf> = Vec::new();
+
+    // pi loads `extensions/*.{ts,js}` from its global agent config dir
+    // (~/.pi/agent) and per-project (.pi).
+    let mut extension_dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        extension_dirs.push(home.join(".pi").join("agent").join("extensions"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        extension_dirs.push(cwd.join(".pi").join("extensions"));
+    }
+    for dir in &extension_dirs {
+        for ext in ["ts", "js"] {
+            let candidate = dir.join(format!("sidekick.{ext}"));
+            if candidate.is_file() {
+                matched.push(candidate);
+            }
+        }
+    }
+
+    matched.sort();
+    matched.dedup();
+
+    if !matched.is_empty() {
+        let detail = matched
+            .iter()
+            .map(|p| display_path(p))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Check {
+            label: "pi extension installed".into(),
+            detail: Some(detail),
+            status: Status::Pass,
+        };
+    }
+
+    Check {
+        label: "pi extension not installed".into(),
+        detail: None,
+        status: Status::Fail {
+            remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
+        },
+    }
+}
+
 /// Whether an executable of this name is on `$PATH`.
 fn binary_on_path(name: &str) -> bool {
     std::env::var_os("PATH")
@@ -540,6 +598,15 @@ pub(crate) fn uses_opencode() -> bool {
     binary_on_path("opencode")
         || dirs::home_dir()
             .map(|h| h.join(".config").join("opencode").is_dir())
+            .unwrap_or(false)
+}
+
+/// Whether this machine looks like a pi coding agent user. The `~/.pi/agent`
+/// directory is pi-specific; `pi` alone is a short name that could collide.
+fn uses_pi() -> bool {
+    binary_on_path("pi")
+        || dirs::home_dir()
+            .map(|h| h.join(".pi").join("agent").is_dir())
             .unwrap_or(false)
 }
 

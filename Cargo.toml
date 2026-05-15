@@ -29,4 +29,4 @@ similar = "2.6"
 rmp = "=0.8.14"
 
 [build-dependencies]
-ureq = "2.10"
+ureq = "2.12.1"

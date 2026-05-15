@@ -48,7 +48,7 @@ pub struct Stats {
     pub range: TimeRange,
     pub generated_at: DateTime<Utc>,
 
-    /// Hero: total mutations Claude tried that landed on a dirty current buffer.
+    /// Hero: total mutations the AI tried that landed on a dirty current buffer.
     pub saves: u32,
     /// Total hook decisions in window (allowed + denied).
     pub total_decisions: u32,
@@ -69,8 +69,8 @@ pub struct Stats {
     /// Per-bucket "you" activity: nvim launches + buffer-dirty-current
     /// incidents. The top sparkline.
     pub you_buckets: Vec<u32>,
-    /// Per-bucket Claude activity: every hook decision. The bottom sparkline.
-    pub claude_buckets: Vec<u32>,
+    /// Per-bucket AI activity: every hook decision. The bottom sparkline.
+    pub ai_buckets: Vec<u32>,
     /// Per-bucket save count (decisions blocked because buffer was dirty
     /// and current). The dot trail between top and bottom.
     pub save_buckets: Vec<u32>,
@@ -320,7 +320,7 @@ pub fn aggregate(events: Vec<Event>, range: TimeRange) -> Stats {
     };
 
     let mut you_buckets = vec![0u32; BUCKET_COUNT];
-    let mut claude_buckets = vec![0u32; BUCKET_COUNT];
+    let mut ai_buckets = vec![0u32; BUCKET_COUNT];
     let mut save_buckets = vec![0u32; BUCKET_COUNT];
 
     for e in &filtered {
@@ -330,7 +330,7 @@ pub fn aggregate(events: Vec<Event>, range: TimeRange) -> Stats {
                 you_buckets[idx] += 1;
             }
             Event::HookDecision(d) => {
-                claude_buckets[idx] += 1;
+                ai_buckets[idx] += 1;
                 if matches!(d.decision, Decision::Deny)
                     && matches!(d.reason, DecisionReason::BufferDirtyAndCurrent)
                 {
@@ -338,7 +338,7 @@ pub fn aggregate(events: Vec<Event>, range: TimeRange) -> Stats {
                     // Note: `you_buckets` deliberately does NOT include saves.
                     // Letting saves bump both lines makes them look parallel and
                     // kills the visual tension. We want "you" to read as your
-                    // *arrival moments* (nvim launches), distinct from Claude's
+                    // *arrival moments* (nvim launches), distinct from the AI's
                     // constant hum.
                 }
             }
@@ -401,7 +401,7 @@ pub fn aggregate(events: Vec<Event>, range: TimeRange) -> Stats {
         by_tool,
         by_reason,
         you_buckets,
-        claude_buckets,
+        ai_buckets,
         save_buckets,
         day_markers,
         views_today,
