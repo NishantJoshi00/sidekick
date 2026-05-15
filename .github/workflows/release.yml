@@ -1,0 +1,96 @@
+name: Release
+
+# Manual release: publish to crates.io, then tag.
+#
+# Bump the version in Cargo.toml, Cargo.lock, and .claude-plugin/plugin.json
+# in a normal commit to main FIRST. Then run this workflow and type that same
+# version. Everything that can fail is checked before the irreversible steps:
+#
+#   verify -> test -> publish -> tag
+#
+# If any guard or the publish fails, nothing is tagged. Fix the cause and
+# re-run -- no retagging.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (must already match Cargo.toml/Cargo.lock/plugin.json on main)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # --- Guards: back off here, before anything irreversible ---
+
+      - name: Ensure running on main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "❌ Release must be run from main (got ${{ github.ref }})"
+            exit 1
+          fi
+          echo "✅ Running on main"
+
+      - name: Verify version files match input
+        run: |
+          INPUT="${{ inputs.version }}"
+          CARGO=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          PLUGIN=$(grep '"version":' .claude-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          LOCK=$(grep -A1 '^name = "sidekick"' Cargo.lock | grep '^version' | sed 's/version = "\(.*\)"/\1/')
+
+          fail=0
+          for pair in "Cargo.toml:$CARGO" ".claude-plugin/plugin.json:$PLUGIN" "Cargo.lock:$LOCK"; do
+            name=${pair%%:*}; val=${pair#*:}
+            if [ "$val" != "$INPUT" ]; then
+              echo "❌ $name version ($val) does not match input ($INPUT)"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Bump all version files and commit to main before releasing."
+            exit 1
+          fi
+          echo "✅ All version files match $INPUT"
+
+      - name: Ensure tag does not already exist
+        run: |
+          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "❌ Tag v${{ inputs.version }} already exists"
+            exit 1
+          fi
+          echo "✅ Tag v${{ inputs.version }} is free"
+
+      - name: Run tests
+        run: cargo test --locked --verbose
+
+      - name: Dry-run publish
+        run: cargo publish --locked --dry-run
+
+      # --- Irreversible steps ---
+
+      - name: Publish to crates.io
+        run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Tag release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+          echo "✅ Published and tagged v${{ inputs.version }}"
