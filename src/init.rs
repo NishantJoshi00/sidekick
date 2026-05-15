@@ -166,13 +166,31 @@ fn drive(out: &mut impl Write, theme: &Theme, steps: &mut [Step]) -> io::Result<
             steps[i].outcome = Some(Outcome::AlreadyDone);
         } else {
             let mut show_diff = false;
-            draw(out, theme, steps, Some(i), true, show_diff, spin, &mut height)?;
+            draw(
+                out,
+                theme,
+                steps,
+                Some(i),
+                true,
+                show_diff,
+                spin,
+                &mut height,
+            )?;
             loop {
                 let answer = ask(out, theme, i, &mut spin, &mut height)?;
                 match answer {
                     Answer::Diff => {
                         show_diff = true;
-                        draw(out, theme, steps, Some(i), true, show_diff, spin, &mut height)?;
+                        draw(
+                            out,
+                            theme,
+                            steps,
+                            Some(i),
+                            true,
+                            show_diff,
+                            spin,
+                            &mut height,
+                        )?;
                     }
                     Answer::Yes => {
                         let outcome = match &steps[i].state {

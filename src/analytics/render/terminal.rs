@@ -27,8 +27,7 @@ impl Renderer for TerminalRenderer {
     fn render(&self, stats: &Stats, out: &mut dyn Write) -> anyhow::Result<()> {
         let p = Paint::new(self.color);
 
-        if stats.you_buckets.iter().all(|&v| v == 0) && stats.ai_buckets.iter().all(|&v| v == 0)
-        {
+        if stats.you_buckets.iter().all(|&v| v == 0) && stats.ai_buckets.iter().all(|&v| v == 0) {
             return render_empty(out, &p);
         }
 

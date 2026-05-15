@@ -17,8 +17,7 @@ use crate::analytics::event::{Decision, Event, ToolKind};
 use crate::analytics::store;
 use crate::utils;
 
-pub(crate) const SPINNER_FRAMES: &[&str] =
-    &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(crate) const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const FRAMES_PER_CHECK: u32 = 3;
 const FRAME_DELAY: Duration = Duration::from_millis(70);
 
@@ -552,9 +551,9 @@ fn check_pi_extension() -> Check {
 
     // Presence isn't enough — a stale or hand-edited extension is missing
     // fixes. The binary embeds the canonical extension, so compare byte-for-byte.
-    let all_current = matched.iter().all(|p| {
-        std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::PI_EXTENSION_SRC)
-    });
+    let all_current = matched
+        .iter()
+        .all(|p| std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::PI_EXTENSION_SRC));
 
     if all_current {
         Check {
