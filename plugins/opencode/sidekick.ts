@@ -6,6 +6,10 @@
 //   - tool.execute.after   → refresh buffers after an edit lands
 //   - chat.message         → inject the current Neovim visual selection
 //
+// Covers the edit/write tools and the apply_patch tool that opencode
+// substitutes for them on GPT models (a single apply_patch call can touch
+// several files at once).
+//
 // Install: drop this file into ~/.config/opencode/plugin/sidekick.ts
 //          (per-project: <project>/.opencode/plugin/sidekick.ts)
 //
@@ -22,6 +26,16 @@ const TOOL_MAP: Record<string, ToolName> = {
   edit: "Edit",
   write: "Write",
 }
+
+// opencode does model-conditional tool substitution: for GPT models it swaps
+// edit/write for a single `apply_patch` tool whose only arg is a multi-file
+// V4A patch. Affected files live in these marker lines, project-root-relative.
+const PATCH_FILE_MARKERS = [
+  "*** Add File:",
+  "*** Update File:",
+  "*** Delete File:",
+  "*** Move to:",
+]
 
 type ToolEnvelope = {
   session_id: string
@@ -58,6 +72,47 @@ function pickFilePath(args: unknown): string | null {
   if (!args || typeof args !== "object") return null
   const candidate = (args as Record<string, unknown>).filePath
   return typeof candidate === "string" && candidate.length > 0 ? candidate : null
+}
+
+// Scan an apply_patch `patchText` blob for every file it touches.
+function pickPatchPaths(args: unknown): string[] {
+  if (!args || typeof args !== "object") return []
+  const patch = (args as Record<string, unknown>).patchText
+  if (typeof patch !== "string") return []
+
+  const paths: string[] = []
+  for (const line of patch.split("\n")) {
+    const trimmed = line.trimStart()
+    for (const marker of PATCH_FILE_MARKERS) {
+      if (trimmed.startsWith(marker)) {
+        const candidate = trimmed.slice(marker.length).trim()
+        if (candidate) paths.push(candidate)
+        break
+      }
+    }
+  }
+  return paths
+}
+
+// Resolve a tool call into the absolute file paths it will touch. Returns
+// null if this tool isn't one sidekick cares about. A single apply_patch
+// call can touch several files; edit/write touch exactly one.
+function resolveCall(
+  tool: string,
+  args: unknown,
+  cwd: string,
+): { toolName: ToolName; filePaths: string[] } | null {
+  const abs = (p: string) => (isAbsolute(p) ? p : join(cwd, p))
+
+  if (tool === "apply_patch") {
+    return { toolName: "Edit", filePaths: pickPatchPaths(args).map(abs) }
+  }
+
+  const toolName = TOOL_MAP[tool]
+  if (!toolName) return null
+
+  const raw = pickFilePath(args)
+  return { toolName, filePaths: raw ? [abs(raw)] : [] }
 }
 
 function callSidekick(envelope: HookEnvelope, cwd: string): Promise<HookResponse | null> {
@@ -113,39 +168,39 @@ export const SidekickPlugin: Plugin = async ({ directory }) => {
   const cwd = directory ?? process.cwd()
 
   // opencode's tool.execute.after doesn't carry tool args, so we stash the
-  // resolved file path under the call id when the call is allowed through,
-  // then look it up afterward to drive the buffer refresh.
-  const pendingByCallID = new Map<string, { tool: ToolName; filePath: string }>()
+  // resolved file paths under the call id when the call is allowed through,
+  // then look them up afterward to drive the buffer refresh.
+  const pendingByCallID = new Map<string, { toolName: ToolName; filePaths: string[] }>()
 
   return {
     "tool.execute.before": async (input, output) => {
-      const toolName = TOOL_MAP[input.tool]
-      if (!toolName) return
+      const call = resolveCall(input.tool, output.args, cwd)
+      if (!call || call.filePaths.length === 0) return
 
-      const raw = pickFilePath(output.args)
-      if (!raw) return
-      const filePath = isAbsolute(raw) ? raw : join(cwd, raw)
-
-      const response = await callSidekick(
-        {
-          session_id: input.sessionID,
-          transcript_path: "",
+      // Check every file the call touches; deny the whole call if any one
+      // has unsaved changes in Neovim.
+      for (const filePath of call.filePaths) {
+        const response = await callSidekick(
+          {
+            session_id: input.sessionID,
+            transcript_path: "",
+            cwd,
+            hook_event_name: "PreToolUse",
+            tool_name: call.toolName,
+            tool_input: { file_path: filePath },
+          },
           cwd,
-          hook_event_name: "PreToolUse",
-          tool_name: toolName,
-          tool_input: { file_path: filePath },
-        },
-        cwd,
-      )
-
-      if (response?.hookSpecificOutput?.permissionDecision === "deny") {
-        throw new Error(
-          response.hookSpecificOutput.permissionDecisionReason ??
-            "sidekick: file has unsaved changes in Neovim",
         )
+
+        if (response?.hookSpecificOutput?.permissionDecision === "deny") {
+          throw new Error(
+            response.hookSpecificOutput.permissionDecisionReason ??
+              "sidekick: file has unsaved changes in Neovim",
+          )
+        }
       }
 
-      pendingByCallID.set(input.callID, { tool: toolName, filePath })
+      pendingByCallID.set(input.callID, call)
     },
 
     "tool.execute.after": async (input) => {
@@ -153,17 +208,20 @@ export const SidekickPlugin: Plugin = async ({ directory }) => {
       if (!pending) return
       pendingByCallID.delete(input.callID)
 
-      await callSidekick(
-        {
-          session_id: input.sessionID,
-          transcript_path: "",
+      // Refresh every Neovim buffer the call modified.
+      for (const filePath of pending.filePaths) {
+        await callSidekick(
+          {
+            session_id: input.sessionID,
+            transcript_path: "",
+            cwd,
+            hook_event_name: "PostToolUse",
+            tool_name: pending.toolName,
+            tool_input: { file_path: filePath },
+          },
           cwd,
-          hook_event_name: "PostToolUse",
-          tool_name: pending.tool,
-          tool_input: { file_path: pending.filePath },
-        },
-        cwd,
-      )
+        )
+      }
     },
 
     "chat.message": async (input, output) => {

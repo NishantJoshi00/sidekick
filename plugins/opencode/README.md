@@ -3,9 +3,10 @@
 This plugin lets [opencode](https://opencode.ai) respect the same Neovim
 integration that protects Claude Code users:
 
-- Before opencode runs `edit` or `write`, the plugin pipes a hook envelope to
-  the `sidekick` binary; if you have the target file open with unsaved
-  changes, the call is blocked until you save.
+- Before opencode runs an edit (`edit`, `write`, or the `apply_patch` tool it
+  uses on GPT models), the plugin pipes a hook envelope to the `sidekick`
+  binary; if you have a target file open with unsaved changes, the call is
+  blocked until you save.
 - After each tool call, sidekick refreshes the buffer in every Neovim
   instance that has the file open.
 - When you submit a prompt, your current Neovim visual selection is appended
@@ -42,8 +43,11 @@ opencode chat.message         →  sidekick hook (UserPromptSubmit)
 
 When sidekick replies with `permissionDecision: "deny"`, the plugin throws to
 abort the tool call. Any other response (including no response) lets it
-proceed. Because `tool.execute.after` doesn't carry tool arguments, the plugin
-correlates the two events by opencode's `callID`.
+proceed. The plugin correlates the before/after events by opencode's `callID`.
+
+`apply_patch` carries a single multi-file patch rather than a `filePath`, so
+the plugin parses the patch's `*** Add/Update/Delete File:` and `*** Move to:`
+markers and checks (and refreshes) every file the patch touches.
 
 For `chat.message`, sidekick returns the Neovim visual selection as
 `additionalContext`; the plugin appends it to the user's existing text part
