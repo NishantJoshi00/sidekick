@@ -11,6 +11,7 @@
 //! non-interactively.
 
 use std::io::{self, IsTerminal, Write};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -167,10 +168,7 @@ fn drive(out: &mut impl Write, theme: &Theme, steps: &mut [Step]) -> io::Result<
             let mut show_diff = false;
             draw(out, theme, steps, Some(i), true, show_diff, spin, &mut height)?;
             loop {
-                let (answer, prompt_lines) = ask(theme)?;
-                // The typed answer + Enter echo extra lines; fold them into the
-                // tracked height so the next redraw clears them too.
-                height += prompt_lines - 1;
+                let answer = ask(out, theme, i, &mut spin, &mut height)?;
                 match answer {
                     Answer::Diff => {
                         show_diff = true;
@@ -252,9 +250,16 @@ fn render_block(
         String::new(),
     ];
 
+    // Widest label drives a shared column so trailing statuses line up.
+    let label_width = steps
+        .iter()
+        .map(|s| s.label.chars().count())
+        .max()
+        .unwrap_or(0);
+
     for (idx, step) in steps.iter().enumerate() {
         if let Some(outcome) = &step.outcome {
-            out.push(render_resolved(theme, step, outcome));
+            out.push(render_resolved(theme, step, outcome, label_width));
         } else if active == Some(idx) {
             let spinner = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
             out.push(format!("  {spinner} {}", step.label));
@@ -280,27 +285,33 @@ fn render_block(
     out
 }
 
-fn render_resolved(theme: &Theme, step: &Step, outcome: &Outcome) -> String {
+fn render_resolved(theme: &Theme, step: &Step, outcome: &Outcome, label_width: usize) -> String {
     let label = match step.accent {
         Some(code) => theme.wrap(code, step.label),
         None => step.label.to_string(),
     };
+    // Pad on the *visible* label width — the ANSI color codes wrapping `label`
+    // would otherwise throw off any plain `{:<width}` alignment.
+    let pad = " ".repeat(label_width.saturating_sub(step.label.chars().count()));
     match outcome {
         Outcome::AlreadyDone => format!(
-            "  {} {}   {}",
+            "  {} {label}{pad}   {}",
             theme.green("✓"),
-            label,
             theme.dim("already set"),
         ),
-        Outcome::SetUp => format!("  {} {}   {}", theme.green("✓"), label, theme.dim("set up")),
+        Outcome::SetUp => format!(
+            "  {} {label}{pad}   {}",
+            theme.green("✓"),
+            theme.dim("set up"),
+        ),
         Outcome::Skipped => format!(
-            "  {} {}   {}",
+            "  {} {}{pad}   {}",
             theme.dim("·"),
             theme.dim(step.label),
             theme.dim("skipped"),
         ),
         Outcome::Failed(e) => format!(
-            "  {} {}   {}",
+            "  {} {}{pad}   {}",
             theme.red("✗"),
             step.label,
             theme.dim(&format!("— {e}")),
@@ -325,27 +336,85 @@ enum Answer {
     Quit,
 }
 
-/// Read a y/n/d/q answer. Returns how many terminal lines the prompt occupied
-/// (one per attempt) so the caller can clear the echoed input on redraw.
-fn ask(theme: &Theme) -> io::Result<(Answer, usize)> {
-    let mut prompt_lines = 1usize;
+/// Prompt for a y/n/d/q answer while the active step's spinner keeps turning.
+/// Returns once the user answers; `last_height` is advanced past any echoed
+/// input lines so the next redraw clears them too.
+fn ask(
+    out: &mut impl Write,
+    theme: &Theme,
+    active: usize,
+    spin: &mut usize,
+    last_height: &mut usize,
+) -> io::Result<Answer> {
+    // The active step's spinner sits on line `4 + active` (1-based): three
+    // header lines, then one line per already-resolved step above it.
+    let spinner_line = 4 + active;
+    let mut retries = 0usize;
     loop {
-        let mut line = String::new();
-        if io::stdin().read_line(&mut line)? == 0 {
-            return Ok((Answer::Quit, prompt_lines));
+        // Each retry prompt pushes the input cursor one line further down.
+        let rows_up = (*last_height + retries).saturating_sub(spinner_line);
+        let line = match read_line_spinning(out, theme, spin, rows_up)? {
+            Some(line) => line,
+            None => {
+                *last_height += retries;
+                return Ok(Answer::Quit);
+            }
+        };
+        let answer = match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => Some(Answer::Yes),
+            "" | "n" | "no" | "skip" => Some(Answer::No),
+            "d" | "diff" => Some(Answer::Diff),
+            "q" | "quit" => Some(Answer::Quit),
+            _ => None,
+        };
+        if let Some(answer) = answer {
+            *last_height += retries;
+            return Ok(answer);
         }
-        match line.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => return Ok((Answer::Yes, prompt_lines)),
-            "" | "n" | "no" | "skip" => return Ok((Answer::No, prompt_lines)),
-            "d" | "diff" => return Ok((Answer::Diff, prompt_lines)),
-            "q" | "quit" => return Ok((Answer::Quit, prompt_lines)),
-            _ => {
-                print!("  {} ", theme.dim("answer y, n, d, or q  ›"));
-                io::stdout().flush()?;
-                prompt_lines += 1;
+        write!(out, "  {} ", theme.dim("answer y, n, d, or q  ›"))?;
+        out.flush()?;
+        retries += 1;
+    }
+}
+
+/// Block for a line of input, advancing the spinner every frame while we wait.
+/// The blocking read runs on a side thread so the main thread stays free to
+/// animate. `None` means EOF.
+fn read_line_spinning(
+    out: &mut impl Write,
+    theme: &Theme,
+    spin: &mut usize,
+    rows_up: usize,
+) -> io::Result<Option<String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut line = String::new();
+        let _ = tx.send(io::stdin().read_line(&mut line).map(|n| (n, line)));
+    });
+    loop {
+        match rx.recv_timeout(FRAME_DELAY) {
+            Ok(Ok((0, _))) => return Ok(None),
+            Ok(Ok((_, line))) => return Ok(Some(line)),
+            Ok(Err(e)) => return Err(e),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                *spin += 1;
+                spin_cell(out, theme, *spin, rows_up)?;
             }
         }
     }
+}
+
+/// Repaint just the spinner glyph in place — hop up to its cell and back —
+/// so the user's input line and cursor are left untouched.
+fn spin_cell(out: &mut impl Write, theme: &Theme, spin: usize, rows_up: usize) -> io::Result<()> {
+    if rows_up == 0 {
+        return Ok(());
+    }
+    let frame = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
+    // DECSC save, jump up to the spinner cell (column 2), repaint, DECRC restore.
+    write!(out, "\x1b7\x1b[{rows_up}A\r\x1b[2C{frame}\x1b8")?;
+    out.flush()
 }
 
 /// Tally the run and point at `doctor` when anything changed. Skips are a plain
