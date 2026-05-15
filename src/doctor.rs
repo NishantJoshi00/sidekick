@@ -594,6 +594,27 @@ pub(crate) enum AliasStatus {
     Unknown,
 }
 
+/// Echoed immediately before `type nvim` so we can discard whatever the
+/// interactive rc files (.zshrc banners, MOTDs) wrote to stdout on startup —
+/// otherwise that noise gets mistaken for the probe's result.
+const NVIM_PROBE_SENTINEL: &str = "__sidekick_probe__";
+
+/// Runs `type nvim` in `shell` as an interactive shell (`-i`, so rc-file
+/// aliases resolve) and returns just that command's output, with any startup
+/// banner printed before [`NVIM_PROBE_SENTINEL`] stripped off.
+fn probe_nvim_type(shell: &str) -> std::io::Result<String> {
+    let out = Command::new(shell)
+        .args([
+            "-i",
+            "-c",
+            &format!("echo {NVIM_PROBE_SENTINEL}; type nvim"),
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let isolated = stdout.rsplit(NVIM_PROBE_SENTINEL).next().unwrap_or(&stdout);
+    Ok(isolated.to_string())
+}
+
 /// Runtime check of whether `nvim` resolves to `sidekick neovim` in the login
 /// shell — the same probe `check_shell_alias` renders, shared so `--fix` never
 /// offers an alias that's already live.
@@ -601,17 +622,9 @@ pub(crate) fn nvim_alias_status() -> AliasStatus {
     let Ok(shell) = std::env::var("SHELL") else {
         return AliasStatus::Unknown;
     };
-    match Command::new(&shell)
-        .args(["-i", "-c", "type nvim"])
-        .output()
-    {
-        Ok(out) => {
-            if String::from_utf8_lossy(&out.stdout).contains("sidekick neovim") {
-                AliasStatus::Active
-            } else {
-                AliasStatus::Missing
-            }
-        }
+    match probe_nvim_type(&shell) {
+        Ok(out) if out.contains("sidekick neovim") => AliasStatus::Active,
+        Ok(_) => AliasStatus::Missing,
         Err(_) => AliasStatus::Unknown,
     }
 }
@@ -648,14 +661,10 @@ fn check_shell_alias() -> Check {
         .unwrap_or("shell")
         .to_string();
 
-    // `-i` makes the shell source the user's rc files (.zshrc, .bashrc, …)
-    // so aliases defined there resolve. `type nvim` works in bash/zsh/fish.
-    match Command::new(&shell)
-        .args(["-i", "-c", "type nvim"])
-        .output()
-    {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
+    // `probe_nvim_type` sources the user's rc files (so aliases resolve) and
+    // strips any startup banner the rc files print, leaving just `type nvim`.
+    match probe_nvim_type(&shell) {
+        Ok(stdout) => {
             if stdout.contains("sidekick neovim") {
                 Check {
                     label: format!("nvim alias: nvim → sidekick neovim ({shell_name})"),
