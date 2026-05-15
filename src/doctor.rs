@@ -17,15 +17,16 @@ use crate::analytics::event::{Decision, Event, ToolKind};
 use crate::analytics::store;
 use crate::utils;
 
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub(crate) const SPINNER_FRAMES: &[&str] =
+    &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const FRAMES_PER_CHECK: u32 = 3;
 const FRAME_DELAY: Duration = Duration::from_millis(70);
 
 // Brand accents (truecolor ANSI params) for the AI-integration rows, applied
 // to the label only when that integration is configured correctly.
-const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
-const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
-const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
+pub(crate) const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
+pub(crate) const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
+pub(crate) const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
 
 enum Status {
     Pass,
@@ -503,7 +504,8 @@ fn check_opencode_plugin() -> Check {
     }
 }
 
-fn check_pi_extension() -> Check {
+/// Extension files that already wire up sidekick for the pi coding agent.
+pub(crate) fn pi_extension_files() -> Vec<PathBuf> {
     let mut matched: Vec<PathBuf> = Vec::new();
 
     // pi loads `extensions/*.{ts,js}` from its global agent config dir
@@ -526,26 +528,48 @@ fn check_pi_extension() -> Check {
 
     matched.sort();
     matched.dedup();
+    matched
+}
 
-    if !matched.is_empty() {
-        let detail = matched
-            .iter()
-            .map(|p| display_path(p))
-            .collect::<Vec<_>>()
-            .join("\n");
+fn check_pi_extension() -> Check {
+    let matched = pi_extension_files();
+
+    if matched.is_empty() {
         return Check {
-            label: "pi extension installed".into(),
-            detail: Some(detail),
-            status: Status::Pass,
+            label: "pi extension not installed".into(),
+            detail: None,
+            status: Status::Fail {
+                remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
+            },
         };
     }
 
-    Check {
-        label: "pi extension not installed".into(),
-        detail: None,
-        status: Status::Fail {
-            remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
-        },
+    let detail = matched
+        .iter()
+        .map(|p| display_path(p))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Presence isn't enough — a stale or hand-edited extension is missing
+    // fixes. The binary embeds the canonical extension, so compare byte-for-byte.
+    let all_current = matched.iter().all(|p| {
+        std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::PI_EXTENSION_SRC)
+    });
+
+    if all_current {
+        Check {
+            label: "pi extension installed".into(),
+            detail: Some(detail),
+            status: Status::Pass,
+        }
+    } else {
+        Check {
+            label: "pi extension out of sync".into(),
+            detail: Some(detail),
+            status: Status::Fail {
+                remedy: vec!["The installed extension differs from this sidekick build.".into()],
+            },
+        }
     }
 }
 
@@ -603,7 +627,7 @@ pub(crate) fn uses_opencode() -> bool {
 
 /// Whether this machine looks like a pi coding agent user. The `~/.pi/agent`
 /// directory is pi-specific; `pi` alone is a short name that could collide.
-fn uses_pi() -> bool {
+pub(crate) fn uses_pi() -> bool {
     binary_on_path("pi")
         || dirs::home_dir()
             .map(|h| h.join(".pi").join("agent").is_dir())

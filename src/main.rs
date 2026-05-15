@@ -12,6 +12,7 @@ mod doctor;
 mod fix;
 mod handler;
 mod hook;
+mod init;
 mod utils;
 
 use analytics::event::{Event, NvimLaunch, StatsView};
@@ -53,6 +54,12 @@ enum Commands {
         /// Walk through fixes for whatever is misconfigured.
         #[arg(long)]
         fix: bool,
+    },
+    /// Guided first-run setup — wires sidekick into your tools.
+    Init {
+        /// Disable colors.
+        #[arg(long)]
+        no_color: bool,
     },
     /// Play a short demo of sidekick.
     Demo,
@@ -146,6 +153,7 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
+        Commands::Init { no_color } => init::run(no_color)?,
         Commands::Demo => demo::run()?,
     }
 

@@ -18,17 +18,24 @@ use crate::doctor::{self, Theme, display_path};
 /// Also the reference the doctor compares an installed plugin against.
 pub(crate) const OPENCODE_PLUGIN_SRC: &str = include_str!("../plugins/opencode/sidekick.ts");
 
+/// The pi extension, baked in so `--fix` needs no repo checkout or network.
+/// Also the reference the doctor compares an installed extension against.
+pub(crate) const PI_EXTENSION_SRC: &str = include_str!("../plugins/pi/sidekick.ts");
+
 /// A single repair: the file at `path` goes from `before` to `after`.
-struct Fix {
-    title: String,
-    path: PathBuf,
+///
+/// Shared with `sidekick init` — both commands write config the same way,
+/// they only present it differently.
+pub(crate) struct Fix {
+    pub(crate) title: String,
+    pub(crate) path: PathBuf,
     /// `None` when the file does not exist yet.
-    before: Option<String>,
-    after: String,
+    pub(crate) before: Option<String>,
+    pub(crate) after: String,
 }
 
 impl Fix {
-    fn verb(&self) -> &'static str {
+    pub(crate) fn verb(&self) -> &'static str {
         if self.before.is_some() {
             "update"
         } else {
@@ -36,7 +43,7 @@ impl Fix {
         }
     }
 
-    fn apply(&self) -> Result<()> {
+    pub(crate) fn apply(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("couldn't create {}", parent.display()))?;
@@ -48,13 +55,13 @@ impl Fix {
 
 /// Build the fix list — one entry per repairable doctor finding, no overlap.
 fn collect() -> Vec<Fix> {
-    [claude_fix(), opencode_fix(), alias_fix()]
+    [claude_fix(), opencode_fix(), pi_fix(), alias_fix()]
         .into_iter()
         .flatten()
         .collect()
 }
 
-fn opencode_fix() -> Option<Fix> {
+pub(crate) fn opencode_fix() -> Option<Fix> {
     if !doctor::uses_opencode() {
         return None;
     }
@@ -86,7 +93,39 @@ fn opencode_fix() -> Option<Fix> {
     })
 }
 
-fn claude_fix() -> Option<Fix> {
+pub(crate) fn pi_fix() -> Option<Fix> {
+    if !doctor::uses_pi() {
+        return None;
+    }
+    // Update an extension that's already there (stale install), else create
+    // one at the canonical path.
+    let canonical = dirs::home_dir()?
+        .join(".pi")
+        .join("agent")
+        .join("extensions")
+        .join("sidekick.ts");
+    let path = doctor::pi_extension_files()
+        .into_iter()
+        .next()
+        .unwrap_or(canonical);
+    let before = std::fs::read_to_string(&path).ok();
+    if before.as_deref() == Some(PI_EXTENSION_SRC) {
+        return None;
+    }
+    let title = if before.is_some() {
+        "Update the pi extension"
+    } else {
+        "Install the pi extension"
+    };
+    Some(Fix {
+        title: title.into(),
+        path,
+        before,
+        after: PI_EXTENSION_SRC.to_string(),
+    })
+}
+
+pub(crate) fn claude_fix() -> Option<Fix> {
     if !doctor::uses_claude_code() || !doctor::claude_hook_files().is_empty() {
         return None;
     }
@@ -101,7 +140,7 @@ fn claude_fix() -> Option<Fix> {
     })
 }
 
-fn alias_fix() -> Option<Fix> {
+pub(crate) fn alias_fix() -> Option<Fix> {
     const ALIAS: &str = "alias nvim='sidekick neovim'";
     // Use the doctor's runtime verdict so we never re-offer a live alias,
     // even when it lives in a file other than the one we'd append to.
@@ -364,6 +403,15 @@ fn card_lines(theme: &Theme, fix: &Fix, idx: usize, total: usize) -> Vec<String>
     }
     out.push(String::new());
     out
+}
+
+/// The diff body for a fix — context and add/remove rows, big diffs truncated.
+/// Shared with `sidekick init`, which shows it on demand behind `[d]`.
+pub(crate) fn render_diff_lines(theme: &Theme, fix: &Fix) -> Vec<String> {
+    truncate_diff(diff_rows(fix.before.as_deref().unwrap_or(""), &fix.after))
+        .iter()
+        .map(|row| render_diff_row(theme, row))
+        .collect()
 }
 
 enum DiffMark {
