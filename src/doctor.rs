@@ -91,6 +91,12 @@ fn build_rows() -> Vec<Row> {
             skipped: false,
         },
         Row {
+            pending_label: "opencode plugin",
+            run: check_opencode_plugin,
+            result: None,
+            skipped: false,
+        },
+        Row {
             pending_label: "nvim alias",
             run: check_shell_alias,
             result: None,
@@ -331,6 +337,54 @@ fn check_claude_hook() -> Check {
             .join("\n");
         Check {
             label: "Claude Code hook registered".into(),
+            detail: Some(detail),
+            status: Status::Pass,
+        }
+    }
+}
+
+fn check_opencode_plugin() -> Check {
+    let mut matched: Vec<PathBuf> = Vec::new();
+
+    // opencode globs `{plugin,plugins}/*.{ts,js}` under its global config dir
+    // (~/.config/opencode) and per-project (.opencode).
+    let mut plugin_dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        plugin_dirs.push(home.join(".config").join("opencode"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        plugin_dirs.push(cwd.join(".opencode"));
+    }
+    for base in &plugin_dirs {
+        for dir in ["plugin", "plugins"] {
+            for ext in ["ts", "js"] {
+                let candidate = base.join(dir).join(format!("sidekick.{ext}"));
+                if candidate.is_file() {
+                    matched.push(candidate);
+                }
+            }
+        }
+    }
+
+    matched.sort();
+    matched.dedup();
+
+    if matched.is_empty() {
+        Check {
+            label: "opencode plugin not installed".into(),
+            detail: Some(
+                "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
+            ),
+            status: Status::Info,
+        }
+    } else {
+        let detail = matched
+            .iter()
+            .map(|p| display_path(p))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Check {
+            label: "opencode plugin installed".into(),
             detail: Some(detail),
             status: Status::Pass,
         }

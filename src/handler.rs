@@ -1,15 +1,17 @@
-//! Hook processing logic for Claude Code integration.
+//! Hook processing logic.
 //!
-//! This module handles Claude Code hooks by reading JSON from stdin, processing
-//! the hook event, and writing the response JSON to stdout. It supports:
+//! Reads a Claude-Code-shaped JSON envelope from stdin, decides allow/deny,
+//! and writes the response JSON to stdout. The same protocol is also driven
+//! by the opencode plugin under `plugins/opencode/`, which translates
+//! opencode's `tool.execute.before`/`.after` events into this envelope.
 //!
 //! # Hook Flow
 //!
-//! 1. PreToolUse: Check if file has unsaved changes before Claude Code modifies it
+//! 1. PreToolUse: Check if file has unsaved changes before the AI modifies it
 //!    - If file is current buffer with unsaved changes → Deny
 //!    - Otherwise → Allow
 //!
-//! 2. PostToolUse: Refresh buffer after Claude Code modifies it
+//! 2. PostToolUse: Refresh buffer after the AI modifies it
 //!    - Reload buffer from disk across all Neovim instances
 //!    - Preserve cursor positions
 //!
@@ -22,7 +24,7 @@
 //! ```no_run
 //! use sidekick::handler;
 //!
-//! // Called by Claude Code via stdin/stdout
+//! // Called by Claude Code (or the opencode plugin) via stdin/stdout
 //! handler::handle_hook().expect("Failed to process hook");
 //! ```
 
@@ -171,7 +173,7 @@ fn check_buffer_modifications(
     };
 
     if status.has_unsaved_changes && status.is_current {
-        if let Err(e) = action.send_message("Claude tried to edit this file") {
+        if let Err(e) = action.send_message("Edit blocked — file has unsaved changes") {
             eprintln!("Warning: {}", e);
         }
 
