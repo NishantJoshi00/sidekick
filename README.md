@@ -2,6 +2,8 @@
 
 **Protects your unsaved Neovim work from Claude Code, opencode, and pi.**
 
+*A conduit between Neovim and your AI agents — so they wait when you're typing.*
+
 [![crates.io](https://img.shields.io/crates/v/sidekick.svg)](https://crates.io/crates/sidekick) [![MIT License](https://img.shields.io/crates/l/sidekick.svg)](LICENSE)
 
 [![asciicast](https://asciinema.org/a/cpLOxHxSC0BKVK6K.svg)](https://asciinema.org/a/cpLOxHxSC0BKVK6K?t=80)
@@ -10,17 +12,15 @@
 
 ---
 
-## The problem
+I do less and less coding by hand. The part I still do, I do very deliberately — pop open a new pane, open Neovim, start editing. It's a flow state I have to push myself into. The catch: Neovim is the only thing in the system that knows I'm typing. When the agent in the next pane decides the file I'm in needs editing, the buffer reloads, my work gone. So I decided to do something about it.
 
-You're mid-edit in `main.rs`. Claude Code (or opencode, or pi), running in the next pane, decides to refactor the same file. Without sidekick, your unsaved work can get overwritten.
+**Sidekick is the conduit between the editor and the agents.** When you have unsaved changes in a buffer, the agents wait — the edit is denied, your buffer is untouched. Save the file and the next attempt proceeds. No flags, no confirmation prompts, no policy file. The 99% of edits that don't conflict with you go through untouched.
 
-Sidekick sits between the two. **If you have unsaved changes in the buffer the AI is about to touch, the edit is blocked.** Save the file and the next attempt proceeds. No flags, no confirmation prompts, no policy file — the 99% of edits that don't conflict with you go through untouched.
-
-It also works the other direction: when the AI modifies a file you have open, sidekick refreshes the buffer in every Neovim instance, cursor position preserved.
+The other direction works too: when the AI modifies a file you have open, Sidekick refreshes the buffer in every Neovim instance, cursor position preserved.
 
 ## What changes in your workflow
 
-- A file you're editing is now off-limits to the AI until you save it. You'll see this in Neovim: `Edit blocked — file has unsaved changes`.
+- The AI waits on a file while you're editing it. You'll see this in Neovim: `Edit blocked — file has unsaved changes`.
 - A file the AI edits while you have it open is auto-reloaded — no `:e!` dance.
 - A current or recent visual selection in Neovim can be added to your next Claude Code, opencode, or pi prompt as context. Select code, type the prompt, hit enter.
 
@@ -139,7 +139,7 @@ Just use `nvim`. The shell alias routes through sidekick so the hook can find yo
 nvim src/main.rs
 ```
 
-If you do not want the alias, run `sidekick neovim <args>` directly. You won't notice anything different until Claude Code, opencode, or pi tries to overwrite unsaved work, at which point sidekick blocks it and tells the agent why.
+If you do not want the alias, run `sidekick neovim <args>` directly. You won't notice anything different until Claude Code, opencode, or pi tries to overwrite unsaved work, at which point sidekick denies the edit and tells the agent why.
 
 ## Commands
 

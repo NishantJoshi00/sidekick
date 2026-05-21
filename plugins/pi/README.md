@@ -1,12 +1,11 @@
 # sidekick + pi
 
-This extension lets the [pi coding agent](https://github.com/badlogic/pi-mono)
-respect the same Neovim integration that protects Claude Code and opencode
-users:
+This extension gives the [pi coding agent](https://github.com/badlogic/pi-mono)
+the same Neovim integration sidekick provides for Claude Code and opencode:
 
 - Before pi runs `edit` or `write`, the extension pipes a hook envelope to the
   `sidekick` binary; if you have the target file open with unsaved changes,
-  the call is blocked until you save.
+  the call is denied until you save.
 - After each tool call, sidekick refreshes the buffer in every Neovim
   instance that has the file open.
 - When you submit a prompt, your current Neovim visual selection is appended
