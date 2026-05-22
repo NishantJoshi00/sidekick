@@ -26,34 +26,75 @@ pub(crate) const CODEX_PLUGIN_SRC: &str =
     include_str!("../plugins/codex/.codex-plugin/plugin.json");
 pub(crate) const CODEX_HOOKS_SRC: &str = include_str!("../plugins/codex/hooks.json");
 
-/// A single repair: the file at `path` goes from `before` to `after`.
-///
-/// Shared with `sidekick init` — both commands write config the same way,
-/// they only present it differently.
-pub(crate) struct Fix {
-    pub(crate) title: String,
+/// One file edit inside a repair.
+pub(crate) struct FileFix {
     pub(crate) path: PathBuf,
     /// `None` when the file does not exist yet.
     pub(crate) before: Option<String>,
     pub(crate) after: String,
 }
 
+/// A repair, which may touch one file or a small group of related files.
+///
+/// Shared with `sidekick init` — both commands write config the same way,
+/// they only present it differently.
+pub(crate) struct Fix {
+    pub(crate) title: String,
+    pub(crate) files: Vec<FileFix>,
+}
+
 impl Fix {
+    fn single(
+        title: impl Into<String>,
+        path: PathBuf,
+        before: Option<String>,
+        after: String,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            files: vec![FileFix {
+                path,
+                before,
+                after,
+            }],
+        }
+    }
+
     pub(crate) fn verb(&self) -> &'static str {
-        if self.before.is_some() {
-            "update"
+        let mut has_create = false;
+        let mut has_update = false;
+        for file in &self.files {
+            if file.before.is_some() {
+                has_update = true;
+            } else {
+                has_create = true;
+            }
+        }
+        match (has_create, has_update) {
+            (true, false) => "create",
+            (false, true) => "update",
+            _ => "change",
+        }
+    }
+
+    pub(crate) fn target_summary(&self) -> String {
+        if self.files.len() == 1 {
+            display_path(&self.files[0].path)
         } else {
-            "create"
+            format!("{} files", self.files.len())
         }
     }
 
     pub(crate) fn apply(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("couldn't create {}", parent.display()))?;
+        for file in &self.files {
+            if let Some(parent) = file.path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("couldn't create {}", parent.display()))?;
+            }
+            std::fs::write(&file.path, &file.after)
+                .with_context(|| format!("couldn't write {}", file.path.display()))?;
         }
-        std::fs::write(&self.path, &self.after)
-            .with_context(|| format!("couldn't write {}", self.path.display()))
+        Ok(())
     }
 }
 
@@ -92,12 +133,12 @@ pub(crate) fn opencode_fix() -> Option<Fix> {
     } else {
         "Install the opencode plugin"
     };
-    Some(Fix {
-        title: title.into(),
+    Some(Fix::single(
+        title,
         path,
         before,
-        after: OPENCODE_PLUGIN_SRC.to_string(),
-    })
+        OPENCODE_PLUGIN_SRC.to_string(),
+    ))
 }
 
 pub(crate) fn pi_fix() -> Option<Fix> {
@@ -124,12 +165,12 @@ pub(crate) fn pi_fix() -> Option<Fix> {
     } else {
         "Install the pi extension"
     };
-    Some(Fix {
-        title: title.into(),
+    Some(Fix::single(
+        title,
         path,
         before,
-        after: PI_EXTENSION_SRC.to_string(),
-    })
+        PI_EXTENSION_SRC.to_string(),
+    ))
 }
 
 pub(crate) fn codex_fixes() -> Vec<Fix> {
@@ -141,20 +182,20 @@ pub(crate) fn codex_fixes() -> Vec<Fix> {
 }
 
 fn codex_fixes_for(home: Option<&Path>, codex_home: &Path) -> Vec<Fix> {
-    let mut fixes = Vec::new();
+    let mut files = Vec::new();
 
     if let Some(home) = home {
         // Codex personal marketplace entries use `./plugins/<name>` to mean
         // `~/plugins/<name>`, not a path relative to ~/.agents/plugins.
         let source_root = home.join("plugins").join("sidekick");
         push_file_fix(
-            &mut fixes,
+            &mut files,
             "Install the Codex plugin manifest",
             source_root.join(".codex-plugin").join("plugin.json"),
             CODEX_PLUGIN_SRC,
         );
         push_file_fix(
-            &mut fixes,
+            &mut files,
             "Install the Codex hook config",
             source_root.join("hooks.json"),
             CODEX_HOOKS_SRC,
@@ -168,8 +209,7 @@ fn codex_fixes_for(home: Option<&Path>, codex_home: &Path) -> Vec<Fix> {
         if let Ok(after) = codex_marketplace_after(before.as_deref())
             && before.as_deref() != Some(after.as_str())
         {
-            fixes.push(Fix {
-                title: "Register the Sidekick Codex marketplace entry".into(),
+            files.push(FileFix {
                 path: marketplace_path,
                 before,
                 after,
@@ -184,13 +224,13 @@ fn codex_fixes_for(home: Option<&Path>, codex_home: &Path) -> Vec<Fix> {
         .join("sidekick")
         .join(env!("CARGO_PKG_VERSION"));
     push_file_fix(
-        &mut fixes,
+        &mut files,
         "Cache the Codex plugin manifest",
         cache_root.join(".codex-plugin").join("plugin.json"),
         CODEX_PLUGIN_SRC,
     );
     push_file_fix(
-        &mut fixes,
+        &mut files,
         "Cache the Codex hook config",
         cache_root.join("hooks.json"),
         CODEX_HOOKS_SRC,
@@ -201,24 +241,29 @@ fn codex_fixes_for(home: Option<&Path>, codex_home: &Path) -> Vec<Fix> {
     if let Ok(after) = codex_config_after(before.as_deref())
         && before.as_deref() != Some(after.as_str())
     {
-        fixes.push(Fix {
-            title: "Enable the Sidekick Codex plugin".into(),
+        files.push(FileFix {
             path: config_path,
             before,
             after,
         });
     }
 
-    fixes
+    if files.is_empty() {
+        Vec::new()
+    } else {
+        vec![Fix {
+            title: "Install and enable the Codex plugin".into(),
+            files,
+        }]
+    }
 }
 
-fn push_file_fix(fixes: &mut Vec<Fix>, title: &str, path: PathBuf, after: &str) {
+fn push_file_fix(files: &mut Vec<FileFix>, _title: &str, path: PathBuf, after: &str) {
     let before = std::fs::read_to_string(&path).ok();
     if before.as_deref() == Some(after) {
         return;
     }
-    fixes.push(Fix {
-        title: title.into(),
+    files.push(FileFix {
         path,
         before,
         after: after.to_string(),
@@ -232,12 +277,12 @@ pub(crate) fn claude_fix() -> Option<Fix> {
     let path = dirs::home_dir()?.join(".claude").join("settings.json");
     let before = std::fs::read_to_string(&path).ok();
     let after = claude_settings_after(before.as_deref()).ok()?;
-    Some(Fix {
-        title: "Register the Claude Code hooks".into(),
+    Some(Fix::single(
+        "Register the Claude Code hooks",
         path,
         before,
         after,
-    })
+    ))
 }
 
 pub(crate) fn alias_fix() -> Option<Fix> {
@@ -259,12 +304,12 @@ pub(crate) fn alias_fix() -> Option<Fix> {
     after.push_str("\n# sidekick\n");
     after.push_str(ALIAS);
     after.push('\n');
-    Some(Fix {
-        title: "Add the nvim → sidekick alias".into(),
+    Some(Fix::single(
+        "Add the nvim → sidekick alias",
         path,
         before,
         after,
-    })
+    ))
 }
 
 /// Merge sidekick's three hooks into a Claude Code `settings.json`, leaving
@@ -508,7 +553,7 @@ fn print_plan(theme: &Theme, fixes: &[Fix]) -> Result<()> {
             "    {} {}  {}",
             theme.dim("·"),
             fix.title,
-            theme.dim(&display_path(&fix.path)),
+            theme.dim(&fix.target_summary()),
         )?;
     }
     writeln!(out)?;
@@ -565,17 +610,34 @@ fn card_lines(theme: &Theme, fix: &Fix, idx: usize, total: usize) -> Vec<String>
     out.push(String::new());
 
     out.push(format!("  {}", theme.bold(&fix.title)));
-    out.push(format!(
-        "    {}   {}",
-        theme.dim(fix.verb()),
-        theme.dim(&display_path(&fix.path)),
-    ));
+    if fix.files.len() == 1 {
+        out.push(format!(
+            "    {}   {}",
+            theme.dim(fix.verb()),
+            theme.dim(&display_path(&fix.files[0].path)),
+        ));
+    } else {
+        out.push(format!(
+            "    {}   {}",
+            theme.dim(fix.verb()),
+            theme.dim(&fix.target_summary()),
+        ));
+        for file in &fix.files {
+            let verb = if file.before.is_some() {
+                "update"
+            } else {
+                "create"
+            };
+            out.push(format!(
+                "      {}   {}",
+                theme.dim(verb),
+                theme.dim(&display_path(&file.path)),
+            ));
+        }
+    }
     out.push(String::new());
 
-    let rows = truncate_diff(diff_rows(fix.before.as_deref().unwrap_or(""), &fix.after));
-    for row in &rows {
-        out.push(render_diff_row(theme, row));
-    }
+    out.extend(render_diff_lines(theme, fix));
     out.push(String::new());
     out
 }
@@ -583,10 +645,25 @@ fn card_lines(theme: &Theme, fix: &Fix, idx: usize, total: usize) -> Vec<String>
 /// The diff body for a fix — context and add/remove rows, big diffs truncated.
 /// Shared with `sidekick init`, which shows it on demand behind `[d]`.
 pub(crate) fn render_diff_lines(theme: &Theme, fix: &Fix) -> Vec<String> {
-    truncate_diff(diff_rows(fix.before.as_deref().unwrap_or(""), &fix.after))
-        .iter()
-        .map(|row| render_diff_row(theme, row))
-        .collect()
+    let mut out = Vec::new();
+    for (idx, file) in fix.files.iter().enumerate() {
+        if fix.files.len() > 1 {
+            if idx > 0 {
+                out.push(format!("    {} {}", theme.dim("│"), theme.dim("⋮")));
+            }
+            out.push(format!(
+                "    {} {}",
+                theme.dim("│"),
+                theme.dim(&display_path(&file.path))
+            ));
+        }
+        out.extend(
+            truncate_diff(diff_rows(file.before.as_deref().unwrap_or(""), &file.after))
+                .iter()
+                .map(|row| render_diff_row(theme, row)),
+        );
+    }
+    out
 }
 
 enum DiffMark {
@@ -767,7 +844,13 @@ other = true
         let codex_home = root.join("codex");
 
         let fixes = codex_fixes_for(Some(&home), &codex_home);
-        let paths = fixes.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+        assert_eq!(fixes.len(), 1);
+        assert_eq!(fixes[0].title, "Install and enable the Codex plugin");
+        let paths = fixes[0]
+            .files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect::<Vec<_>>();
 
         assert!(paths.contains(&home.join("plugins/sidekick/.codex-plugin/plugin.json")));
         assert!(paths.contains(&home.join("plugins/sidekick/hooks.json")));

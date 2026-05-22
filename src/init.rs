@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::doctor::{
     self, AliasStatus, CLAUDE_ACCENT, CODEX_ACCENT, OPENCODE_ACCENT, PI_ACCENT, SPINNER_FRAMES,
-    Theme, display_path,
+    Theme,
 };
 use crate::fix::{self, Fix};
 
@@ -314,7 +314,7 @@ fn render_block(
                     out.push(format!(
                         "      {}   {}",
                         theme.dim(fix.verb()),
-                        theme.dim(&display_path(&fix.path)),
+                        theme.dim(&fix.target_summary()),
                     ));
                     if show_diff {
                         out.extend(fix::render_diff_lines(theme, fix));
@@ -525,7 +525,7 @@ fn print_plan(theme: &Theme, steps: &[Step]) -> io::Result<()> {
                 "    {} {}  {}",
                 theme.dim("·"),
                 step.label,
-                theme.dim(&display_path(&fix.path)),
+                theme.dim(&fix.target_summary()),
             )?;
         }
     }
