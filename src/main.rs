@@ -6,6 +6,7 @@ use std::process::Command;
 
 mod action;
 mod analytics;
+mod codex_trust;
 mod constants;
 mod demo;
 mod doctor;

@@ -15,6 +15,7 @@
     "editor",
     "hooks"
   ],
+  "hooks": "./hooks.json",
   "interface": {
     "displayName": "Sidekick",
     "shortDescription": "Protect unsaved Neovim buffers from Codex edits.",

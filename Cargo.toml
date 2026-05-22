@@ -25,6 +25,7 @@ ratatui = "0.29"
 avt = "0.18"
 similar = "2.6"
 toml_edit = "0.22"
+sha2 = "0.10"
 
 # Pin rmp to avoid breaking changes in 0.8.15 that break rmpv 0.4.7 (used by neovim-lib)
 rmp = "=0.8.14"

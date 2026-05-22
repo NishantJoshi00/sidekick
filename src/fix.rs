@@ -365,6 +365,29 @@ fn codex_config_after(before: Option<&str>) -> Result<String> {
     doc["plugins"]["sidekick@personal"].or_insert(table());
     doc["plugins"]["sidekick@personal"]["enabled"] = value(true);
 
+    // Codex silently drops untrusted plugin hooks at discovery time, so we
+    // stamp the same `trusted_hash` Codex's interactive TUI would write. The
+    // hashes are derived from a stable canonicalization of our hooks.json
+    // entries — see `codex_trust`.
+    doc["hooks"].or_insert(table());
+    doc["hooks"]["state"].or_insert(table());
+    let state = doc["hooks"]["state"]
+        .as_table_mut()
+        .context("`hooks.state` in ~/.codex/config.toml isn't a table")?;
+    for entry in crate::codex_trust::expected_trust_entries() {
+        state.entry(&entry.key).or_insert(table());
+        let item = state
+            .get_mut(&entry.key)
+            .and_then(|item| item.as_table_mut())
+            .with_context(|| {
+                format!(
+                    "`hooks.state.\"{}\"` in ~/.codex/config.toml isn't a table",
+                    entry.key
+                )
+            })?;
+        item["trusted_hash"] = value(entry.trusted_hash);
+    }
+
     let mut out = doc.to_string();
     if !out.ends_with('\n') {
         out.push('\n');
@@ -809,6 +832,21 @@ mod tests {
         assert!(out.contains("plugin_hooks = true"));
         assert!(out.contains("[plugins.\"sidekick@personal\"]"));
         assert!(out.contains("enabled = true"));
+
+        // Codex drops untrusted plugin hooks at discovery; the fix has to
+        // stamp the trust entries too, or the install is silently inert.
+        for entry in crate::codex_trust::expected_trust_entries() {
+            assert!(
+                out.contains(&format!("[hooks.state.\"{}\"]", entry.key)),
+                "missing [hooks.state.\"{}\"] in:\n{out}",
+                entry.key,
+            );
+            assert!(
+                out.contains(&format!("trusted_hash = \"{}\"", entry.trusted_hash)),
+                "missing trusted_hash for {} in:\n{out}",
+                entry.key,
+            );
+        }
     }
 
     #[test]

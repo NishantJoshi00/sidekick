@@ -507,7 +507,34 @@ fn codex_plugin_detail_files() -> Vec<PathBuf> {
 }
 
 fn codex_plugin_is_configured() -> bool {
-    codex_plugin_enabled() && codex_plugin_hooks_enabled() && codex_plugin_files_current()
+    codex_plugin_enabled()
+        && codex_plugin_hooks_enabled()
+        && codex_plugin_files_current()
+        && codex_plugin_hooks_trusted()
+}
+
+/// True only when every hook our plugin registers has a matching
+/// `trusted_hash` under `[hooks.state.*]`. Without these, Codex silently
+/// drops the handlers at discovery time.
+fn codex_plugin_hooks_trusted() -> bool {
+    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
+        return false;
+    };
+    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(state) = doc.get("hooks").and_then(|hooks| hooks.get("state")) else {
+        return false;
+    };
+    crate::codex_trust::expected_trust_entries()
+        .iter()
+        .all(|entry| {
+            state
+                .get(&entry.key)
+                .and_then(|item| item.get("trusted_hash"))
+                .and_then(|v| v.as_str())
+                == Some(entry.trusted_hash.as_str())
+        })
 }
 
 fn codex_plugin_enabled() -> bool {
