@@ -5,15 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Sidekick is a Rust-based CLI tool that provides two main functionalities:
-1. **Claude Code Hook Handler**: Intercepts Claude Code tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
+1. **AI Agent Hook Handler**: Intercepts Claude Code, Codex, opencode, and pi tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
 2. **Neovim Integration**: Launches Neovim instances with deterministic Unix socket paths based on the current working directory and process ID (using blake3 hashing)
 
 ## Architecture
 
 ### Core Components
 
-- **`main.rs`**: CLI entry point with two subcommands:
-  - `hook`: Handles Claude Code PreToolUse hooks via stdin/stdout JSON protocol
+- **`main.rs`**: CLI entry point with subcommands:
+  - `hook`: Handles Claude/Codex-shaped PreToolUse hooks via stdin/stdout JSON protocol
   - `neovim`: Launches Neovim with computed socket path based on CWD hash and PID
 
 - **`handler.rs`**: Hook processing logic that:
@@ -23,10 +23,10 @@ Sidekick is a Rust-based CLI tool that provides two main functionalities:
   - Returns permission decision (Allow/Deny) based on whether ANY instance has the file with unsaved changes in the current buffer
   - Automatically refreshes Neovim buffers in ALL instances after Claude Code modifies files
 
-- **`hook.rs`**: Data structures for Claude Code hooks:
-  - `PreToolUseHook`: Incoming hook payload with discriminated union for tool types
-  - `Tool` enum: Read, Write, Edit, MultiEdit, Bash
-  - `HookOutput`: Response structure with permission decisions for Claude Code
+- **`hook.rs`**: Data structures for Claude/Codex-shaped hooks:
+  - `ToolHook`: Incoming hook payload with a known-tool enum and generic fallback for Codex tools
+  - `Tool` enum: Read, Write, Edit, MultiEdit, Bash, and Other
+  - `HookOutput`: Response structure with permission decisions and additional context
   - `PermissionDecision`: Allow, Deny, Ask
 
 - **`action.rs`**: `Action` trait defining editor operations:
@@ -78,7 +78,7 @@ cargo run -- <subcommand> # Run with arguments
 
 ### Testing Hook Handler
 ```bash
-# Simulate Claude Code PreToolUse hook
+# Simulate Claude Code or Codex PreToolUse hook
 echo '{"session_id":"test","transcript_path":"test","cwd":".","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"test.txt"}}' | cargo run -- hook
 ```
 
@@ -102,6 +102,6 @@ cargo run -- neovim file2.txt  # Creates /tmp/<hash>-<pid2>.sock
 - Neovim socket paths include PID: `/tmp/<blake3(canonicalized_cwd)>-<pid>.sock`
 - Multiple Neovim instances per directory are supported
 - Hook handler discovers all instances using glob pattern matching
-- Hook handler reads JSON from stdin and writes JSON to stdout (Claude Code protocol)
+- Hook handler reads JSON from stdin and writes JSON to stdout (Claude/Codex-compatible protocol)
 - RPC connection timeout is 2 seconds per instance
 - Buffer refresh uses Lua to preserve cursor positions across all windows displaying the buffer

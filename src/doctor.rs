@@ -24,6 +24,7 @@ const FRAME_DELAY: Duration = Duration::from_millis(70);
 // Brand accents (truecolor ANSI params) for the AI-integration rows, applied
 // to the label only when that integration is configured correctly.
 pub(crate) const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
+pub(crate) const CODEX_ACCENT: &str = "38;2;16;185;129"; // #10B981
 pub(crate) const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
 pub(crate) const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
 
@@ -129,6 +130,14 @@ fn build_rows() -> Vec<Row> {
             "Claude Code hook registered",
             check_claude_hook,
             Some(CLAUDE_ACCENT),
+            false,
+        ));
+    }
+    if uses_codex() {
+        rows.push(row(
+            "Codex plugin",
+            check_codex_plugin,
+            Some(CODEX_ACCENT),
             false,
         ));
     }
@@ -347,6 +356,9 @@ fn check_harnesses() -> Check {
     if uses_claude_code() {
         found.push("Claude Code");
     }
+    if uses_codex() {
+        found.push("Codex");
+    }
     if uses_opencode() {
         found.push("opencode");
     }
@@ -360,7 +372,7 @@ fn check_harnesses() -> Check {
             detail: None,
             status: Status::Fail {
                 remedy: vec![
-                    "Install Claude Code, opencode, or pi — sidekick has nothing to guard without one"
+                    "Install Claude Code, Codex, opencode, or pi — sidekick has nothing to guard without one"
                         .into(),
                 ],
             },
@@ -427,6 +439,202 @@ fn check_claude_hook() -> Check {
                 "Or add `sidekick hook` to ~/.claude/settings.json".into(),
             ],
         },
+    }
+}
+
+pub(crate) fn codex_home() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
+        .unwrap_or_else(|| PathBuf::from(".codex"))
+}
+
+fn codex_config_file() -> PathBuf {
+    codex_home().join("config.toml")
+}
+
+pub(crate) fn codex_hook_files() -> Vec<PathBuf> {
+    let mut matched = Vec::new();
+
+    for path in [
+        codex_config_file(),
+        codex_home().join("hooks.json"),
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".codex")
+            .join("hooks.json"),
+    ] {
+        if file_mentions_sidekick_hook(&path) {
+            matched.push(path);
+        }
+    }
+
+    matched.sort();
+    matched.dedup();
+    matched
+}
+
+pub(crate) fn codex_hook_is_configured() -> bool {
+    !codex_hook_files().is_empty() || codex_plugin_is_configured()
+}
+
+fn codex_plugin_detail_files() -> Vec<PathBuf> {
+    let mut matched = Vec::new();
+
+    if let Some(home) = dirs::home_dir() {
+        for path in [
+            home.join("plugins")
+                .join("sidekick")
+                .join(".codex-plugin")
+                .join("plugin.json"),
+            home.join("plugins").join("sidekick").join("hooks.json"),
+            home.join(".agents")
+                .join("plugins")
+                .join("marketplace.json"),
+        ] {
+            if path.is_file() {
+                matched.push(path);
+            }
+        }
+    }
+
+    let config = codex_config_file();
+    if config.is_file() {
+        matched.push(config);
+    }
+
+    matched
+}
+
+fn codex_plugin_is_configured() -> bool {
+    codex_plugin_enabled()
+        && codex_plugin_hooks_enabled()
+        && codex_plugin_files_current()
+        && codex_plugin_hooks_trusted()
+}
+
+/// True only when every hook our plugin registers has a matching
+/// `trusted_hash` under `[hooks.state.*]`. Without these, Codex silently
+/// drops the handlers at discovery time.
+fn codex_plugin_hooks_trusted() -> bool {
+    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
+        return false;
+    };
+    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(state) = doc.get("hooks").and_then(|hooks| hooks.get("state")) else {
+        return false;
+    };
+    crate::codex_trust::expected_trust_entries()
+        .iter()
+        .all(|entry| {
+            state
+                .get(&entry.key)
+                .and_then(|item| item.get("trusted_hash"))
+                .and_then(|v| v.as_str())
+                == Some(entry.trusted_hash.as_str())
+        })
+}
+
+fn codex_plugin_enabled() -> bool {
+    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
+        return false;
+    };
+    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    doc.get("plugins")
+        .and_then(|p| p.get("sidekick@personal"))
+        .and_then(|p| p.get("enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn codex_plugin_hooks_enabled() -> bool {
+    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
+        return false;
+    };
+    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    doc.get("features")
+        .and_then(|p| p.get("plugin_hooks"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn codex_plugin_files_current() -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    let source_root = home.join("plugins").join("sidekick");
+    let cache_root = codex_home()
+        .join("plugins")
+        .join("cache")
+        .join("personal")
+        .join("sidekick")
+        .join(env!("CARGO_PKG_VERSION"));
+
+    codex_plugin_root_current(&source_root) && codex_plugin_root_current(&cache_root)
+}
+
+fn codex_plugin_root_current(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(".codex-plugin").join("plugin.json"))
+        .ok()
+        .as_deref()
+        == Some(crate::fix::CODEX_PLUGIN_SRC)
+        && std::fs::read_to_string(root.join("hooks.json"))
+            .ok()
+            .as_deref()
+            == Some(crate::fix::CODEX_HOOKS_SRC)
+}
+
+fn check_codex_plugin() -> Check {
+    let direct_hooks = codex_hook_files();
+    if !direct_hooks.is_empty() {
+        return Check {
+            label: "Codex hook registered".into(),
+            detail: Some(
+                direct_hooks
+                    .iter()
+                    .map(|p| display_path(p))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            status: Status::Pass,
+        };
+    }
+
+    if codex_plugin_is_configured() {
+        return Check {
+            label: "Codex plugin installed".into(),
+            detail: Some(
+                codex_plugin_detail_files()
+                    .iter()
+                    .map(|p| display_path(p))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            status: Status::Pass,
+        };
+    }
+
+    let mut remedy = Vec::new();
+    if !codex_plugin_hooks_enabled() {
+        remedy.push("Enable Codex plugin hooks in ~/.codex/config.toml".into());
+    }
+    if !codex_plugin_enabled() {
+        remedy.push("Enable the Sidekick Codex plugin as `sidekick@personal`".into());
+    }
+    if !codex_plugin_files_current() {
+        remedy.push("Install the Sidekick Codex plugin into your personal marketplace".into());
+    }
+
+    Check {
+        label: "Codex plugin not installed".into(),
+        detail: None,
+        status: Status::Fail { remedy },
     }
 }
 
@@ -585,6 +793,11 @@ pub(crate) fn uses_claude_code() -> bool {
         || dirs::home_dir()
             .map(|h| h.join(".claude").is_dir())
             .unwrap_or(false)
+}
+
+/// Whether this machine looks like a Codex user.
+pub(crate) fn uses_codex() -> bool {
+    binary_on_path("codex") || codex_home().is_dir()
 }
 
 #[derive(PartialEq)]
@@ -759,7 +972,7 @@ fn check_last_hook() -> Check {
         }
         None => Check {
             label: "last activity: never".into(),
-            detail: Some("Ask Claude to edit a file to see one.".into()),
+            detail: Some("Ask an AI agent to edit a file to see one.".into()),
             status: Status::Info,
         },
     }

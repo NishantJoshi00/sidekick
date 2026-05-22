@@ -1,0 +1,38 @@
+{
+  "name": "sidekick",
+  "version": "0.6.4",
+  "description": "Neovim protection for Codex: blocks edits to dirty buffers, refreshes changed buffers, and injects visual selections.",
+  "author": {
+    "name": "Nishant Joshi",
+    "url": "https://github.com/NishantJoshi00"
+  },
+  "homepage": "https://github.com/NishantJoshi00/sidekick",
+  "repository": "https://github.com/NishantJoshi00/sidekick",
+  "license": "MIT",
+  "keywords": [
+    "neovim",
+    "codex",
+    "editor",
+    "hooks"
+  ],
+  "hooks": "./hooks.json",
+  "interface": {
+    "displayName": "Sidekick",
+    "shortDescription": "Protect unsaved Neovim buffers from Codex edits.",
+    "longDescription": "Sidekick connects Codex to Neovim so Codex waits before editing files with unsaved changes, refreshes buffers after external edits, and can attach your visual selection as prompt context.",
+    "developerName": "Nishant Joshi",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/NishantJoshi00/sidekick",
+    "privacyPolicyURL": "https://github.com/NishantJoshi00/sidekick",
+    "termsOfServiceURL": "https://github.com/NishantJoshi00/sidekick",
+    "defaultPrompt": [
+      "Edit this file while respecting my Neovim buffer",
+      "Use my selected Neovim code as context"
+    ],
+    "brandColor": "#10B981",
+    "screenshots": []
+  }
+}

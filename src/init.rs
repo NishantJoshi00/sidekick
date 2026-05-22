@@ -16,8 +16,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::doctor::{
-    self, AliasStatus, CLAUDE_ACCENT, OPENCODE_ACCENT, PI_ACCENT, SPINNER_FRAMES, Theme,
-    display_path,
+    self, AliasStatus, CLAUDE_ACCENT, CODEX_ACCENT, OPENCODE_ACCENT, PI_ACCENT, SPINNER_FRAMES,
+    Theme,
 };
 use crate::fix::{self, Fix};
 
@@ -81,6 +81,33 @@ fn build_steps() -> Vec<Step> {
             fix::claude_fix(),
         ));
     }
+    if doctor::uses_codex() {
+        let mut fixes = fix::codex_fixes();
+        if fixes.is_empty() {
+            steps.push(make_step(
+                "Codex plugin",
+                "Lets Codex respect your unsaved Neovim buffers before it writes.",
+                Some(CODEX_ACCENT),
+                None,
+            ));
+        } else {
+            let first = fixes.remove(0);
+            steps.push(make_step(
+                "Codex plugin",
+                "Lets Codex respect your unsaved Neovim buffers before it writes.",
+                Some(CODEX_ACCENT),
+                Some(first),
+            ));
+            for fix in fixes {
+                steps.push(make_step(
+                    "Codex plugin",
+                    "Completes the Sidekick Codex plugin installation.",
+                    Some(CODEX_ACCENT),
+                    Some(fix),
+                ));
+            }
+        }
+    }
     if doctor::uses_opencode() {
         steps.push(make_step(
             "opencode plugin",
@@ -120,7 +147,7 @@ pub fn run(no_color: bool) -> anyhow::Result<()> {
         writeln!(
             out,
             "\n  {}\n",
-            theme.dim("No AI harness found — install Claude Code, opencode, or pi first."),
+            theme.dim("No AI harness found — install Claude Code, Codex, opencode, or pi first."),
         )?;
         return Ok(());
     }
@@ -287,7 +314,7 @@ fn render_block(
                     out.push(format!(
                         "      {}   {}",
                         theme.dim(fix.verb()),
-                        theme.dim(&display_path(&fix.path)),
+                        theme.dim(&fix.target_summary()),
                     ));
                     if show_diff {
                         out.extend(fix::render_diff_lines(theme, fix));
@@ -498,7 +525,7 @@ fn print_plan(theme: &Theme, steps: &[Step]) -> io::Result<()> {
                 "    {} {}  {}",
                 theme.dim("·"),
                 step.label,
-                theme.dim(&display_path(&fix.path)),
+                theme.dim(&fix.target_summary()),
             )?;
         }
     }

@@ -171,6 +171,39 @@ fn test_parse_user_prompt_submit_hook() {
 }
 
 #[test]
+fn test_parse_codex_tool_hook_with_nullable_transcript() {
+    let json = r#"{
+        "session_id": "test-session",
+        "turn_id": "turn-1",
+        "transcript_path": null,
+        "cwd": "/test/dir",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "apply_patch",
+        "tool_use_id": "tool-1",
+        "tool_input": {
+            "patch": "*** Begin Patch\n*** Update File: test.txt\n*** End Patch\n"
+        }
+    }"#;
+
+    let hook = parse_hook(json).expect("Failed to parse hook");
+
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
+
+    assert_eq!(h.transcript_path, None);
+    match h.tool {
+        Tool::Other { name, input } => {
+            assert_eq!(name, "apply_patch");
+            assert!(input["patch"].as_str().unwrap().contains("test.txt"));
+        }
+        _ => panic!("Expected generic Codex tool"),
+    }
+}
+
+#[test]
 fn test_hook_output_with_additional_context() {
     let output = HookOutput::new().with_additional_context("Selected code here");
 
