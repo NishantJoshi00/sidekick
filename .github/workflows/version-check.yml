@@ -17,20 +17,31 @@ jobs:
         id: versions
         run: |
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          PLUGIN_VERSION=$(grep '"version":' .claude-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          CLAUDE_PLUGIN_VERSION=$(grep '"version":' .claude-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          CODEX_PLUGIN_VERSION=$(grep '"version":' plugins/codex/.codex-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
 
           echo "cargo=$CARGO_VERSION" >> $GITHUB_OUTPUT
-          echo "plugin=$PLUGIN_VERSION" >> $GITHUB_OUTPUT
+          echo "claude_plugin=$CLAUDE_PLUGIN_VERSION" >> $GITHUB_OUTPUT
+          echo "codex_plugin=$CODEX_PLUGIN_VERSION" >> $GITHUB_OUTPUT
 
           echo "Cargo.toml version: $CARGO_VERSION"
-          echo "plugin.json version: $PLUGIN_VERSION"
+          echo "Claude plugin.json version: $CLAUDE_PLUGIN_VERSION"
+          echo "Codex plugin.json version: $CODEX_PLUGIN_VERSION"
 
       - name: Verify versions match
         run: |
-          if [ "${{ steps.versions.outputs.cargo }}" != "${{ steps.versions.outputs.plugin }}" ]; then
+          if [ "${{ steps.versions.outputs.cargo }}" != "${{ steps.versions.outputs.claude_plugin }}" ]; then
             echo "❌ Version mismatch detected!"
             echo "   Cargo.toml: ${{ steps.versions.outputs.cargo }}"
-            echo "   plugin.json: ${{ steps.versions.outputs.plugin }}"
+            echo "   Claude plugin.json: ${{ steps.versions.outputs.claude_plugin }}"
+            echo ""
+            echo "Please update both files to have the same version number."
+            exit 1
+          fi
+          if [ "${{ steps.versions.outputs.cargo }}" != "${{ steps.versions.outputs.codex_plugin }}" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "   Cargo.toml: ${{ steps.versions.outputs.cargo }}"
+            echo "   Codex plugin.json: ${{ steps.versions.outputs.codex_plugin }}"
             echo ""
             echo "Please update both files to have the same version number."
             exit 1

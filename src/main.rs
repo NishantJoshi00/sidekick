@@ -21,7 +21,7 @@ use analytics::{TimeRange, aggregate};
 
 #[derive(Parser)]
 #[command(name = "sidekick")]
-#[command(about = "Protects your unsaved Neovim work from Claude Code.", long_about = None)]
+#[command(about = "Protects your unsaved Neovim work from AI coding agents.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -29,7 +29,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run as a Claude Code hook
+    /// Run as an AI coding-agent hook
     Hook,
     /// Launch Neovim with sidekick wired in
     Neovim {

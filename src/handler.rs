@@ -1,10 +1,9 @@
 //! Hook processing logic.
 //!
-//! Reads a Claude-Code-shaped JSON envelope from stdin, decides allow/deny,
-//! and writes the response JSON to stdout. The same protocol is also driven
-//! by the bridges under `plugins/` — the opencode plugin and the pi
-//! extension — which translate their host's tool and prompt events into
-//! this envelope.
+//! Reads a Claude/Codex-shaped JSON envelope from stdin, decides allow/deny,
+//! and writes the response JSON to stdout. The same protocol is also driven by
+//! the bridges under `plugins/` — the opencode plugin and the pi extension —
+//! which translate their host's tool and prompt events into this envelope.
 //!
 //! # Hook Flow
 //!
@@ -25,7 +24,7 @@
 //! ```no_run
 //! use sidekick::handler;
 //!
-//! // Called by Claude Code (or the opencode/pi bridges) via stdin/stdout
+//! // Called by Claude Code, Codex, or the opencode/pi bridges via stdin/stdout
 //! handler::handle_hook().expect("Failed to process hook");
 //! ```
 
@@ -39,7 +38,9 @@ use crate::analytics::{
     self,
     event::{BufferRefresh, Decision, DecisionReason, Event, HookDecision, ToolKind},
 };
-use crate::hook::{self, Hook, HookEvent, HookOutput, PermissionDecision, Tool, ToolHook};
+use crate::hook::{
+    self, FileToolInput, Hook, HookEvent, HookOutput, PermissionDecision, Tool, ToolHook,
+};
 use crate::utils;
 
 pub fn handle_hook() -> anyhow::Result<()> {
@@ -82,53 +83,63 @@ fn handle_pre_tool_use(
     nvim_action: Option<&NeovimAction>,
     instances_probed: usize,
 ) -> HookOutput {
-    let Some((tool_kind, file_path)) = tool_to_mutation(&h.tool) else {
+    let mutations = tool_to_mutations(&h.tool);
+    if mutations.is_empty() {
         return HookOutput::new();
     };
 
-    let started = Instant::now();
-    let (output, reason) = check_buffer_modifications(nvim_action, file_path);
-    let decision = match reason {
-        DecisionReason::BufferDirtyAndCurrent => Decision::Deny,
-        _ => Decision::Allow,
-    };
+    for (tool_kind, file_path) in mutations {
+        let started = Instant::now();
+        let (output, reason) = check_buffer_modifications(nvim_action, &file_path);
+        let decision = match reason {
+            DecisionReason::BufferDirtyAndCurrent => Decision::Deny,
+            _ => Decision::Allow,
+        };
 
-    analytics::store::append(&Event::HookDecision(HookDecision {
-        at: Utc::now(),
-        session_id: h.session_id.clone(),
-        cwd: h.cwd.clone(),
-        tool: tool_kind,
-        file: file_path.to_string(),
-        decision,
-        reason,
-        instances_probed,
-        latency_ms: started.elapsed().as_millis() as u64,
-    }));
-
-    output
-}
-
-/// Handle PostToolUse hook - refresh buffers after modifications
-fn handle_post_tool_use(h: &ToolHook, nvim_action: Option<&NeovimAction>) -> HookOutput {
-    let Some((tool_kind, file_path)) = tool_to_mutation(&h.tool) else {
-        return HookOutput::new();
-    };
-
-    let output = refresh_buffer(nvim_action, file_path);
-
-    // Only count refreshes when nvim was reachable — otherwise nothing happened
-    // and recording the event would inflate the activity charts.
-    if nvim_action.is_some() {
-        analytics::store::append(&Event::BufferRefresh(BufferRefresh {
+        analytics::store::append(&Event::HookDecision(HookDecision {
             at: Utc::now(),
             session_id: h.session_id.clone(),
             cwd: h.cwd.clone(),
             tool: tool_kind,
-            file: file_path.to_string(),
+            file: file_path.clone(),
+            decision,
+            reason,
+            instances_probed,
+            latency_ms: started.elapsed().as_millis() as u64,
         }));
+
+        if matches!(decision, Decision::Deny) {
+            return output;
+        }
     }
 
-    output
+    HookOutput::new()
+}
+
+/// Handle PostToolUse hook - refresh buffers after modifications
+fn handle_post_tool_use(h: &ToolHook, nvim_action: Option<&NeovimAction>) -> HookOutput {
+    let mutations = tool_to_mutations(&h.tool);
+    if mutations.is_empty() {
+        return HookOutput::new();
+    };
+
+    for (tool_kind, file_path) in mutations {
+        refresh_buffer(nvim_action, &file_path);
+
+        // Only count refreshes when nvim was reachable — otherwise nothing happened
+        // and recording the event would inflate the activity charts.
+        if nvim_action.is_some() {
+            analytics::store::append(&Event::BufferRefresh(BufferRefresh {
+                at: Utc::now(),
+                session_id: h.session_id.clone(),
+                cwd: h.cwd.clone(),
+                tool: tool_kind,
+                file: file_path,
+            }));
+        }
+    }
+
+    HookOutput::new()
 }
 
 /// Handle UserPromptSubmit hook - inject visual selections as context
@@ -201,11 +212,163 @@ fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOu
     HookOutput::new()
 }
 
-fn tool_to_mutation(tool: &Tool) -> Option<(ToolKind, &str)> {
+fn tool_to_mutations(tool: &Tool) -> Vec<(ToolKind, String)> {
     match tool {
-        Tool::Edit(f) => Some((ToolKind::Edit, f.file_path.as_str())),
-        Tool::Write(f) => Some((ToolKind::Write, f.file_path.as_str())),
-        Tool::MultiEdit(f) => Some((ToolKind::MultiEdit, f.file_path.as_str())),
-        _ => None,
+        Tool::Edit(f) => file_input_mutation(ToolKind::Edit, f),
+        Tool::Write(f) => file_input_mutation(ToolKind::Write, f),
+        Tool::MultiEdit(f) => file_input_mutation(ToolKind::MultiEdit, f),
+        Tool::Other { name, input } => other_tool_mutations(name, input),
+        _ => Vec::new(),
+    }
+}
+
+fn file_input_mutation(tool_kind: ToolKind, input: &FileToolInput) -> Vec<(ToolKind, String)> {
+    vec![(tool_kind, input.file_path.clone())]
+}
+
+fn other_tool_mutations(name: &str, input: &serde_json::Value) -> Vec<(ToolKind, String)> {
+    let normalized = name.to_ascii_lowercase();
+
+    if normalized == "apply_patch" {
+        return dedupe_paths(
+            collect_patch_paths(input)
+                .into_iter()
+                .map(|p| (ToolKind::Edit, p)),
+        );
+    }
+
+    let tool_kind = match normalized.as_str() {
+        "edit" => ToolKind::Edit,
+        "write" => ToolKind::Write,
+        "multiedit" | "multi_edit" => ToolKind::MultiEdit,
+        _ => return Vec::new(),
+    };
+
+    if let Some(path) = pick_file_path(input) {
+        return vec![(tool_kind, path.to_string())];
+    }
+
+    Vec::new()
+}
+
+fn pick_file_path(input: &serde_json::Value) -> Option<&str> {
+    input.as_object().and_then(|obj| {
+        ["file_path", "filePath", "path"]
+            .into_iter()
+            .find_map(|key| obj.get(key).and_then(|v| v.as_str()))
+    })
+}
+
+fn collect_patch_paths(input: &serde_json::Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_patch_paths_inner(input, &mut paths);
+    dedupe_paths(paths.into_iter().map(|p| (ToolKind::Edit, p)))
+        .into_iter()
+        .map(|(_, p)| p)
+        .collect()
+}
+
+fn collect_patch_paths_inner(input: &serde_json::Value, paths: &mut Vec<String>) {
+    match input {
+        serde_json::Value::String(s) => paths.extend(parse_patch_paths(s)),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_patch_paths_inner(value, paths);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                collect_patch_paths_inner(value, paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_patch_paths(patch: &str) -> Vec<String> {
+    const PATCH_FILE_MARKERS: &[&str] = &[
+        "*** Add File:",
+        "*** Update File:",
+        "*** Delete File:",
+        "*** Move to:",
+    ];
+
+    let mut paths = Vec::new();
+    for line in patch.lines() {
+        let trimmed = line.trim_start();
+        for marker in PATCH_FILE_MARKERS {
+            if let Some(rest) = trimmed.strip_prefix(marker) {
+                let path = rest.trim();
+                if !path.is_empty() {
+                    paths.push(path.to_string());
+                }
+                break;
+            }
+        }
+    }
+    paths
+}
+
+fn dedupe_paths(
+    mutations: impl IntoIterator<Item = (ToolKind, String)>,
+) -> Vec<(ToolKind, String)> {
+    let mut deduped = Vec::new();
+    for mutation in mutations {
+        if !deduped.iter().any(|existing| existing == &mutation) {
+            deduped.push(mutation);
+        }
+    }
+    deduped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_to_mutations;
+    use crate::analytics::event::ToolKind;
+    use crate::hook::Tool;
+
+    #[test]
+    fn extracts_codex_apply_patch_paths() {
+        let tool = Tool::Other {
+            name: "apply_patch".into(),
+            input: serde_json::json!({
+                "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n*** Add File: src/new.rs\n*** Delete File: src/old.rs\n*** Move to: src/moved.rs\n*** End Patch\n"
+            }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![
+                (ToolKind::Edit, "src/lib.rs".into()),
+                (ToolKind::Edit, "src/new.rs".into()),
+                (ToolKind::Edit, "src/old.rs".into()),
+                (ToolKind::Edit, "src/moved.rs".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_lowercase_tool_path_variants() {
+        let tool = Tool::Other {
+            name: "write".into(),
+            input: serde_json::json!({ "path": "README.md" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Write, "README.md".into())]
+        );
+    }
+
+    #[test]
+    fn ignores_apply_patch_without_file_markers() {
+        let tool = Tool::Other {
+            name: "apply_patch".into(),
+            input: serde_json::json!({
+                "patch": "*** Begin Patch\n@@\n-no file header\n+still no file header\n*** End Patch\n"
+            }),
+        };
+
+        assert!(tool_to_mutations(&tool).is_empty());
     }
 }

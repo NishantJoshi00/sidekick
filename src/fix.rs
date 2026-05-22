@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use similar::{ChangeTag, TextDiff};
+use toml_edit::{DocumentMut, table, value};
 
 use crate::doctor::{self, Theme, display_path};
 
@@ -21,6 +22,9 @@ pub(crate) const OPENCODE_PLUGIN_SRC: &str = include_str!("../plugins/opencode/s
 /// The pi extension, baked in so `--fix` needs no repo checkout or network.
 /// Also the reference the doctor compares an installed extension against.
 pub(crate) const PI_EXTENSION_SRC: &str = include_str!("../plugins/pi/sidekick.ts");
+pub(crate) const CODEX_PLUGIN_SRC: &str =
+    include_str!("../plugins/codex/.codex-plugin/plugin.json");
+pub(crate) const CODEX_HOOKS_SRC: &str = include_str!("../plugins/codex/hooks.json");
 
 /// A single repair: the file at `path` goes from `before` to `after`.
 ///
@@ -55,10 +59,13 @@ impl Fix {
 
 /// Build the fix list — one entry per repairable doctor finding, no overlap.
 fn collect() -> Vec<Fix> {
-    [claude_fix(), opencode_fix(), pi_fix(), alias_fix()]
-        .into_iter()
-        .flatten()
-        .collect()
+    let mut fixes = Vec::new();
+    fixes.extend(claude_fix());
+    fixes.extend(codex_fixes());
+    fixes.extend(opencode_fix());
+    fixes.extend(pi_fix());
+    fixes.extend(alias_fix());
+    fixes
 }
 
 pub(crate) fn opencode_fix() -> Option<Fix> {
@@ -123,6 +130,99 @@ pub(crate) fn pi_fix() -> Option<Fix> {
         before,
         after: PI_EXTENSION_SRC.to_string(),
     })
+}
+
+pub(crate) fn codex_fixes() -> Vec<Fix> {
+    if !doctor::uses_codex() || doctor::codex_hook_is_configured() {
+        return Vec::new();
+    }
+
+    codex_fixes_for(dirs::home_dir().as_deref(), &doctor::codex_home())
+}
+
+fn codex_fixes_for(home: Option<&Path>, codex_home: &Path) -> Vec<Fix> {
+    let mut fixes = Vec::new();
+
+    if let Some(home) = home {
+        // Codex personal marketplace entries use `./plugins/<name>` to mean
+        // `~/plugins/<name>`, not a path relative to ~/.agents/plugins.
+        let source_root = home.join("plugins").join("sidekick");
+        push_file_fix(
+            &mut fixes,
+            "Install the Codex plugin manifest",
+            source_root.join(".codex-plugin").join("plugin.json"),
+            CODEX_PLUGIN_SRC,
+        );
+        push_file_fix(
+            &mut fixes,
+            "Install the Codex hook config",
+            source_root.join("hooks.json"),
+            CODEX_HOOKS_SRC,
+        );
+
+        let marketplace_path = home
+            .join(".agents")
+            .join("plugins")
+            .join("marketplace.json");
+        let before = std::fs::read_to_string(&marketplace_path).ok();
+        if let Ok(after) = codex_marketplace_after(before.as_deref())
+            && before.as_deref() != Some(after.as_str())
+        {
+            fixes.push(Fix {
+                title: "Register the Sidekick Codex marketplace entry".into(),
+                path: marketplace_path,
+                before,
+                after,
+            });
+        }
+    }
+
+    let cache_root = codex_home
+        .join("plugins")
+        .join("cache")
+        .join("personal")
+        .join("sidekick")
+        .join(env!("CARGO_PKG_VERSION"));
+    push_file_fix(
+        &mut fixes,
+        "Cache the Codex plugin manifest",
+        cache_root.join(".codex-plugin").join("plugin.json"),
+        CODEX_PLUGIN_SRC,
+    );
+    push_file_fix(
+        &mut fixes,
+        "Cache the Codex hook config",
+        cache_root.join("hooks.json"),
+        CODEX_HOOKS_SRC,
+    );
+
+    let config_path = codex_home.join("config.toml");
+    let before = std::fs::read_to_string(&config_path).ok();
+    if let Ok(after) = codex_config_after(before.as_deref())
+        && before.as_deref() != Some(after.as_str())
+    {
+        fixes.push(Fix {
+            title: "Enable the Sidekick Codex plugin".into(),
+            path: config_path,
+            before,
+            after,
+        });
+    }
+
+    fixes
+}
+
+fn push_file_fix(fixes: &mut Vec<Fix>, title: &str, path: PathBuf, after: &str) {
+    let before = std::fs::read_to_string(&path).ok();
+    if before.as_deref() == Some(after) {
+        return;
+    }
+    fixes.push(Fix {
+        title: title.into(),
+        path,
+        before,
+        after: after.to_string(),
+    });
 }
 
 pub(crate) fn claude_fix() -> Option<Fix> {
@@ -201,6 +301,81 @@ fn claude_settings_after(before: Option<&str>) -> Result<String> {
             }));
         }
     }
+    let mut s = serde_json::to_string_pretty(&root)?;
+    s.push('\n');
+    Ok(s)
+}
+
+fn codex_config_after(before: Option<&str>) -> Result<String> {
+    let mut doc = match before {
+        Some(s) if !s.trim().is_empty() => s
+            .parse::<DocumentMut>()
+            .context("~/.codex/config.toml isn't valid TOML")?,
+        _ => DocumentMut::new(),
+    };
+
+    doc["features"].or_insert(table());
+    doc["features"]["plugin_hooks"] = value(true);
+    doc["plugins"].or_insert(table());
+    doc["plugins"]["sidekick@personal"].or_insert(table());
+    doc["plugins"]["sidekick@personal"]["enabled"] = value(true);
+
+    let mut out = doc.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn codex_marketplace_after(before: Option<&str>) -> Result<String> {
+    let mut root: serde_json::Value = match before {
+        Some(s) if !s.trim().is_empty() => serde_json::from_str(s)
+            .context("~/.agents/plugins/marketplace.json isn't valid JSON")?,
+        _ => serde_json::json!({
+            "name": "personal",
+            "interface": { "displayName": "Personal" },
+            "plugins": []
+        }),
+    };
+
+    let obj = root
+        .as_object_mut()
+        .context("~/.agents/plugins/marketplace.json isn't a JSON object")?;
+    obj.entry("name")
+        .or_insert_with(|| serde_json::json!("personal"));
+    obj.entry("interface").or_insert_with(|| {
+        serde_json::json!({
+            "displayName": "Personal"
+        })
+    });
+    let plugins = obj
+        .entry("plugins")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .context("`plugins` in marketplace.json isn't an array")?;
+
+    let sidekick_entry = serde_json::json!({
+        "name": "sidekick",
+        "source": {
+            "source": "local",
+            "path": "./plugins/sidekick"
+        },
+        "policy": {
+            "installation": "AVAILABLE",
+            "authentication": "ON_INSTALL"
+        },
+        "category": "Productivity"
+    });
+
+    if let Some(existing) = plugins
+        .iter_mut()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("sidekick"))
+    {
+        *existing = sidekick_entry;
+    } else {
+        plugins.push(sidekick_entry);
+    }
+
     let mut s = serde_json::to_string_pretty(&root)?;
     s.push('\n');
     Ok(s)
@@ -511,7 +686,9 @@ fn truncate_text(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::claude_settings_after;
+    use super::{
+        claude_settings_after, codex_config_after, codex_fixes_for, codex_marketplace_after,
+    };
 
     #[test]
     fn merges_three_hooks_into_empty_settings() {
@@ -545,5 +722,62 @@ mod tests {
     #[test]
     fn rejects_invalid_json() {
         assert!(claude_settings_after(Some("{ not json")).is_err());
+    }
+
+    #[test]
+    fn enables_codex_plugin_hooks_in_empty_config() {
+        let out = codex_config_after(None).unwrap();
+
+        assert!(out.contains("[features]"));
+        assert!(out.contains("plugin_hooks = true"));
+        assert!(out.contains("[plugins.\"sidekick@personal\"]"));
+        assert!(out.contains("enabled = true"));
+    }
+
+    #[test]
+    fn preserves_existing_codex_config() {
+        let before = r#"model = "gpt-5.5"
+
+[features]
+other = true
+"#;
+        let out = codex_config_after(Some(before)).unwrap();
+
+        assert!(out.contains("model = \"gpt-5.5\""));
+        assert!(out.contains("other = true"));
+        assert!(out.contains("plugin_hooks = true"));
+    }
+
+    #[test]
+    fn merges_codex_personal_marketplace_entry() {
+        let before = r#"{"name":"personal","interface":{"displayName":"Mine"},"plugins":[]}"#;
+        let out = codex_marketplace_after(Some(before)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(v["interface"]["displayName"], "Mine");
+        assert_eq!(v["plugins"][0]["name"], "sidekick");
+        assert_eq!(v["plugins"][0]["source"]["path"], "./plugins/sidekick");
+    }
+
+    #[test]
+    fn codex_fixes_plans_personal_plugin_paths() {
+        let root =
+            std::env::temp_dir().join(format!("sidekick-codex-fixes-{}", std::process::id()));
+        let home = root.join("home");
+        let codex_home = root.join("codex");
+
+        let fixes = codex_fixes_for(Some(&home), &codex_home);
+        let paths = fixes.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
+
+        assert!(paths.contains(&home.join("plugins/sidekick/.codex-plugin/plugin.json")));
+        assert!(paths.contains(&home.join("plugins/sidekick/hooks.json")));
+        assert!(paths.contains(&home.join(".agents/plugins/marketplace.json")));
+        assert!(paths.contains(&codex_home.join("config.toml")));
+        assert!(paths.contains(&codex_home.join(format!(
+            "plugins/cache/personal/sidekick/{}/.codex-plugin/plugin.json",
+            env!("CARGO_PKG_VERSION")
+        ))));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

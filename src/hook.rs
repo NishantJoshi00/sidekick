@@ -1,12 +1,13 @@
-//! Data structures for Claude Code hook protocol.
+//! Data structures for Claude/Codex-compatible hook protocol.
 //!
-//! This module defines the JSON structures for communicating with Claude Code's
-//! hook system. It supports PreToolUse and PostToolUse hooks with discriminated
-//! union types for different tools (Read, Write, Edit, MultiEdit, Bash).
+//! This module defines the JSON structures for communicating with Claude Code,
+//! Codex, and bridge plugins. It supports PreToolUse and PostToolUse hooks with
+//! known tool types and a generic fallback for tool shapes sidekick does not
+//! need to understand.
 //!
 //! # Hook Protocol
 //!
-//! Claude Code sends a JSON payload via stdin with:
+//! The host sends a JSON payload via stdin with:
 //! - Hook metadata (session_id, cwd, etc.)
 //! - Hook event type (PreToolUse or PostToolUse)
 //! - Tool information (name and input parameters)
@@ -43,7 +44,7 @@ pub enum HookEvent {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ToolHook {
     pub session_id: String,
-    pub transcript_path: String,
+    pub transcript_path: Option<String>,
     pub cwd: String,
     pub hook_event_name: HookEvent,
     #[serde(flatten)]
@@ -59,18 +60,21 @@ pub enum Hook {
 
 /// Tool types discriminated by tool_name
 #[non_exhaustive]
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "tool_name", content = "tool_input")]
+#[derive(Debug, Clone)]
 pub enum Tool {
     Read(FileToolInput),
     Write(FileToolInput),
     Edit(FileToolInput),
     MultiEdit(FileToolInput),
     Bash(BashToolInput),
+    Other {
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
 /// File operation tool input
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileToolInput {
     pub file_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,10 +86,89 @@ pub struct FileToolInput {
 }
 
 /// Bash tool input
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BashToolInput {
     pub command: String,
     pub description: String,
+}
+
+impl<'de> serde::Deserialize<'de> for Tool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let name = value
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| serde::de::Error::missing_field("tool_name"))?
+            .to_string();
+        let input = value
+            .get("tool_input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
+        match name.as_str() {
+            "Read" => serde_json::from_value(input)
+                .map(Tool::Read)
+                .map_err(serde::de::Error::custom),
+            "Write" => serde_json::from_value(input)
+                .map(Tool::Write)
+                .map_err(serde::de::Error::custom),
+            "Edit" => serde_json::from_value(input)
+                .map(Tool::Edit)
+                .map_err(serde::de::Error::custom),
+            "MultiEdit" => serde_json::from_value(input)
+                .map(Tool::MultiEdit)
+                .map_err(serde::de::Error::custom),
+            "Bash" => serde_json::from_value(input)
+                .map(Tool::Bash)
+                .map_err(serde::de::Error::custom),
+            _ => Ok(Tool::Other { name, input }),
+        }
+    }
+}
+
+impl serde::Serialize for Tool {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            tool_name: &'a str,
+            tool_input: serde_json::Value,
+        }
+
+        let wire = match self {
+            Tool::Read(input) => Wire {
+                tool_name: "Read",
+                tool_input: serde_json::to_value(input).map_err(serde::ser::Error::custom)?,
+            },
+            Tool::Write(input) => Wire {
+                tool_name: "Write",
+                tool_input: serde_json::to_value(input).map_err(serde::ser::Error::custom)?,
+            },
+            Tool::Edit(input) => Wire {
+                tool_name: "Edit",
+                tool_input: serde_json::to_value(input).map_err(serde::ser::Error::custom)?,
+            },
+            Tool::MultiEdit(input) => Wire {
+                tool_name: "MultiEdit",
+                tool_input: serde_json::to_value(input).map_err(serde::ser::Error::custom)?,
+            },
+            Tool::Bash(input) => Wire {
+                tool_name: "Bash",
+                tool_input: serde_json::to_value(input).map_err(serde::ser::Error::custom)?,
+            },
+            Tool::Other { name, input } => Wire {
+                tool_name: name,
+                tool_input: input.clone(),
+            },
+        };
+
+        wire.serialize(serializer)
+    }
 }
 
 pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {

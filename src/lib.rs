@@ -1,14 +1,14 @@
-//! Sidekick: Claude Code hook handler and Neovim integration.
+//! Sidekick: AI coding-agent hook handler and Neovim integration.
 //!
 //! This crate provides two main functionalities:
 //!
-//! 1. **Claude Code Hook Handler**: Prevents file modifications when files are being
+//! 1. **Hook Handler**: Prevents file modifications when AI agents are
 //!    edited in Neovim with unsaved changes
 //! 2. **Neovim Integration**: Launches Neovim instances with deterministic socket paths
 //!
 //! # Architecture
 //!
-//! - `handler`: Hook processing logic for Claude Code
+//! - `handler`: Hook processing logic for Claude Code, Codex, and bridge plugins
 //! - `hook`: Data structures for hook protocol
 //! - `action`: Editor operations abstraction (buffer status, refresh, messages)
 //! - `utils`: Socket path computation and discovery
