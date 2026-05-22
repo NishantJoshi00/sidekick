@@ -478,29 +478,32 @@ pub(crate) fn codex_hook_is_configured() -> bool {
     !codex_hook_files().is_empty() || codex_plugin_is_configured()
 }
 
-pub(crate) fn codex_plugin_files() -> Vec<PathBuf> {
+fn codex_plugin_detail_files() -> Vec<PathBuf> {
     let mut matched = Vec::new();
 
     if let Some(home) = dirs::home_dir() {
-        matched.push(
+        for path in [
             home.join("plugins")
                 .join("sidekick")
                 .join(".codex-plugin")
                 .join("plugin.json"),
-        );
-        matched.push(home.join("plugins").join("sidekick").join("hooks.json"));
+            home.join("plugins").join("sidekick").join("hooks.json"),
+            home.join(".agents")
+                .join("plugins")
+                .join("marketplace.json"),
+        ] {
+            if path.is_file() {
+                matched.push(path);
+            }
+        }
     }
 
-    let cache_root = codex_home()
-        .join("plugins")
-        .join("cache")
-        .join("personal")
-        .join("sidekick")
-        .join(env!("CARGO_PKG_VERSION"));
-    matched.push(cache_root.join(".codex-plugin").join("plugin.json"));
-    matched.push(cache_root.join("hooks.json"));
+    let config = codex_config_file();
+    if config.is_file() {
+        matched.push(config);
+    }
 
-    matched.into_iter().filter(|p| p.is_file()).collect()
+    matched
 }
 
 fn codex_plugin_is_configured() -> bool {
@@ -580,7 +583,7 @@ fn check_codex_plugin() -> Check {
         return Check {
             label: "Codex plugin installed".into(),
             detail: Some(
-                codex_plugin_files()
+                codex_plugin_detail_files()
                     .iter()
                     .map(|p| display_path(p))
                     .collect::<Vec<_>>()
