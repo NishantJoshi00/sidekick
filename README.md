@@ -14,6 +14,8 @@
   <a href="https://opencode.ai"><img src="https://opencode.ai/apple-touch-icon-v3.png" alt="opencode" height="48" width="48"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://pi.dev"><img src="https://pi.dev/logo-auto.svg" alt="pi" height="48" width="48"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/charmbracelet/crush"><img src="https://github.com/charmbracelet.png?size=160" alt="Crush" height="48" width="48"></a>
 </p>
 
 *A conduit between Neovim and your AI agents — so they wait when you're typing.*
