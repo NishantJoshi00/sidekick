@@ -1,250 +1,39 @@
-//! Integration tests for hook processing
+//! HookOutput serialisation tests — the JSON shape sidekick writes back to
+//! its host. Parse-side coverage lives in `tests/integration.rs`.
 
-use sidekick::hook::{Hook, HookEvent, HookOutput, PermissionDecision, Tool, parse_hook};
-
-#[test]
-fn test_parse_pre_tool_use_edit_hook() {
-    let json = r#"{
-        "session_id": "test-session",
-        "transcript_path": "/tmp/transcript",
-        "cwd": "/test/dir",
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Edit",
-        "tool_input": {
-            "file_path": "test.txt",
-            "old_string": "old",
-            "new_string": "new"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    assert_eq!(h.session_id, "test-session");
-    assert_eq!(h.cwd, "/test/dir");
-    assert_eq!(h.hook_event_name, HookEvent::PreToolUse);
-
-    match h.tool {
-        Tool::Edit(input) => {
-            assert_eq!(input.file_path, "test.txt");
-            assert_eq!(input.old_string, Some("old".to_string()));
-            assert_eq!(input.new_string, Some("new".to_string()));
-        }
-        _ => panic!("Expected Edit tool"),
-    }
-}
+use sidekick::hook::{HookOutput, PermissionDecision};
 
 #[test]
-fn test_parse_post_tool_use_write_hook() {
-    let json = r#"{
-        "session_id": "test-session",
-        "transcript_path": "/tmp/transcript",
-        "cwd": "/test/dir",
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Write",
-        "tool_input": {
-            "file_path": "test.txt",
-            "content": "file content"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    assert_eq!(h.hook_event_name, HookEvent::PostToolUse);
-
-    match h.tool {
-        Tool::Write(input) => {
-            assert_eq!(input.file_path, "test.txt");
-            assert_eq!(input.content, Some("file content".to_string()));
-        }
-        _ => panic!("Expected Write tool"),
-    }
-}
-
-#[test]
-fn test_parse_bash_hook() {
-    let json = r#"{
-        "session_id": "test-session",
-        "transcript_path": "/tmp/transcript",
-        "cwd": "/test/dir",
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {
-            "command": "ls -la",
-            "description": "List files"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    match h.tool {
-        Tool::Bash(input) => {
-            assert_eq!(input.command, "ls -la");
-            assert_eq!(input.description, "List files");
-        }
-        _ => panic!("Expected Bash tool"),
-    }
-}
-
-#[test]
-fn test_hook_output_allow() {
+fn empty_output_serialises_to_empty_object() {
     let output = HookOutput::new();
-    let json = output.to_json().expect("Failed to serialize");
-
-    assert_eq!(json, "{}");
+    assert_eq!(output.to_json().unwrap(), "{}");
 }
 
 #[test]
-fn test_hook_output_deny() {
+fn deny_output_carries_permission_decision_and_reason() {
     let output = HookOutput::new().with_permission_decision(
         PermissionDecision::Deny,
         Some("File has unsaved changes".to_string()),
     );
+    let json = output.to_json().unwrap();
 
-    let json = output.to_json().expect("Failed to serialize");
-
+    // Three keys the host reads — the wire contract.
     assert!(json.contains("\"permissionDecision\":\"deny\""));
     assert!(json.contains("\"permissionDecisionReason\":\"File has unsaved changes\""));
     assert!(json.contains("\"hookEventName\":\"PreToolUse\""));
 }
 
 #[test]
-fn test_hook_output_with_system_message() {
+fn system_message_output_carries_system_message_key() {
     let output = HookOutput::new().with_system_message("Test message");
-
-    let json = output.to_json().expect("Failed to serialize");
-
+    let json = output.to_json().unwrap();
     assert!(json.contains("\"systemMessage\":\"Test message\""));
 }
 
 #[test]
-fn test_parse_multiedit_hook() {
-    let json = r#"{
-        "session_id": "test-session",
-        "transcript_path": "/tmp/transcript",
-        "cwd": "/test/dir",
-        "hook_event_name": "PreToolUse",
-        "tool_name": "MultiEdit",
-        "tool_input": {
-            "file_path": "test.txt"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    match h.tool {
-        Tool::MultiEdit(input) => {
-            assert_eq!(input.file_path, "test.txt");
-        }
-        _ => panic!("Expected MultiEdit tool"),
-    }
-}
-
-#[test]
-fn test_parse_user_prompt_submit_hook() {
-    let json = r#"{
-        "session_id": "test-session",
-        "transcript_path": "/tmp/transcript",
-        "cwd": "/test/dir",
-        "hook_event_name": "UserPromptSubmit",
-        "prompt": "test prompt"
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    assert!(matches!(hook, Hook::UserPrompt));
-}
-
-#[test]
-fn test_parse_codex_tool_hook_with_nullable_transcript() {
-    let json = r#"{
-        "session_id": "test-session",
-        "turn_id": "turn-1",
-        "transcript_path": null,
-        "cwd": "/test/dir",
-        "model": "gpt-5.5",
-        "permission_mode": "default",
-        "hook_event_name": "PreToolUse",
-        "tool_name": "apply_patch",
-        "tool_use_id": "tool-1",
-        "tool_input": {
-            "patch": "*** Begin Patch\n*** Update File: test.txt\n*** End Patch\n"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    assert_eq!(h.transcript_path, None);
-    match h.tool {
-        Tool::Other { name, input } => {
-            assert_eq!(name, "apply_patch");
-            assert!(input["patch"].as_str().unwrap().contains("test.txt"));
-        }
-        _ => panic!("Expected generic Codex tool"),
-    }
-}
-
-#[test]
-fn test_parse_crush_pre_tool_use_edit_hook() {
-    // Crush emits `event` instead of `hook_event_name`, omits `transcript_path`
-    // entirely, and uses lowercase tool names.
-    let json = r#"{
-        "event": "PreToolUse",
-        "session_id": "crush-test-session",
-        "cwd": "/test/dir",
-        "tool_name": "edit",
-        "tool_input": {
-            "file_path": "test.txt",
-            "old_string": "old",
-            "new_string": "new"
-        }
-    }"#;
-
-    let hook = parse_hook(json).expect("Failed to parse Crush hook");
-
-    let Hook::Tool(h) = hook else {
-        panic!("Expected Tool hook");
-    };
-
-    assert_eq!(h.session_id, "crush-test-session");
-    assert_eq!(h.cwd, "/test/dir");
-    assert_eq!(h.hook_event_name, HookEvent::PreToolUse);
-    assert_eq!(h.transcript_path, None);
-
-    match h.tool {
-        Tool::Other { name, input } => {
-            assert_eq!(name, "edit");
-            assert_eq!(input["file_path"], "test.txt");
-        }
-        _ => panic!("Expected generic Other tool for lowercase 'edit'"),
-    }
-}
-
-#[test]
-fn test_hook_output_with_additional_context() {
+fn additional_context_output_targets_user_prompt_submit() {
     let output = HookOutput::new().with_additional_context("Selected code here");
-
-    let json = output.to_json().expect("Failed to serialize");
-
+    let json = output.to_json().unwrap();
     assert!(json.contains("\"additionalContext\":\"Selected code here\""));
     assert!(json.contains("\"hookEventName\":\"UserPromptSubmit\""));
 }

@@ -39,7 +39,8 @@ use crate::analytics::{
     event::{BufferRefresh, Decision, DecisionReason, Event, HookDecision, ToolKind},
 };
 use crate::hook::{
-    self, FileToolInput, Hook, HookEvent, HookOutput, PermissionDecision, Tool, ToolHook,
+    self, ClaudeShape, CrushShape, FileToolInput, Hook, HookOutput, KnownTool, PermissionDecision,
+    Tool,
 };
 use crate::utils;
 
@@ -62,13 +63,26 @@ pub fn handle_hook() -> anyhow::Result<()> {
 
     // Handle based on hook type
     let output = match hook {
-        Hook::Tool(h) => match h.hook_event_name {
-            HookEvent::PreToolUse => {
-                handle_pre_tool_use(&h, nvim_action.as_ref(), instances_probed)
-            }
-            HookEvent::PostToolUse => handle_post_tool_use(&h, nvim_action.as_ref()),
-        },
-        Hook::UserPrompt => handle_user_prompt_submit(nvim_action.as_ref()),
+        Hook::Claude(ClaudeShape::PreToolUse(h)) => handle_pre_tool_use(
+            &h.session_id,
+            &h.cwd,
+            &h.tool,
+            nvim_action.as_ref(),
+            instances_probed,
+        ),
+        Hook::Claude(ClaudeShape::PostToolUse(h)) => {
+            handle_post_tool_use(&h.session_id, &h.cwd, &h.tool, nvim_action.as_ref())
+        }
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => {
+            handle_user_prompt_submit(nvim_action.as_ref())
+        }
+        Hook::Crush(CrushShape::PreToolUse(h)) => handle_pre_tool_use(
+            &h.session_id,
+            &h.cwd,
+            &h.tool,
+            nvim_action.as_ref(),
+            instances_probed,
+        ),
     };
 
     // Return hook output
@@ -79,11 +93,13 @@ pub fn handle_hook() -> anyhow::Result<()> {
 
 /// Handle PreToolUse hook - check if file has unsaved changes
 fn handle_pre_tool_use(
-    h: &ToolHook,
+    session_id: &str,
+    cwd: &str,
+    tool: &Tool,
     nvim_action: Option<&NeovimAction>,
     instances_probed: usize,
 ) -> HookOutput {
-    let mutations = tool_to_mutations(&h.tool);
+    let mutations = tool_to_mutations(tool);
     if mutations.is_empty() {
         return HookOutput::new();
     };
@@ -98,8 +114,8 @@ fn handle_pre_tool_use(
 
         analytics::store::append(&Event::HookDecision(HookDecision {
             at: Utc::now(),
-            session_id: h.session_id.clone(),
-            cwd: h.cwd.clone(),
+            session_id: session_id.to_string(),
+            cwd: cwd.to_string(),
             tool: tool_kind,
             file: file_path.clone(),
             decision,
@@ -117,8 +133,13 @@ fn handle_pre_tool_use(
 }
 
 /// Handle PostToolUse hook - refresh buffers after modifications
-fn handle_post_tool_use(h: &ToolHook, nvim_action: Option<&NeovimAction>) -> HookOutput {
-    let mutations = tool_to_mutations(&h.tool);
+fn handle_post_tool_use(
+    session_id: &str,
+    cwd: &str,
+    tool: &Tool,
+    nvim_action: Option<&NeovimAction>,
+) -> HookOutput {
+    let mutations = tool_to_mutations(tool);
     if mutations.is_empty() {
         return HookOutput::new();
     };
@@ -131,8 +152,8 @@ fn handle_post_tool_use(h: &ToolHook, nvim_action: Option<&NeovimAction>) -> Hoo
         if nvim_action.is_some() {
             analytics::store::append(&Event::BufferRefresh(BufferRefresh {
                 at: Utc::now(),
-                session_id: h.session_id.clone(),
-                cwd: h.cwd.clone(),
+                session_id: session_id.to_string(),
+                cwd: cwd.to_string(),
                 tool: tool_kind,
                 file: file_path,
             }));
@@ -223,10 +244,13 @@ fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOu
 #[allow(dead_code)] // called from tests/integration.rs (separate crate)
 pub fn extract_mutations(input: &str) -> anyhow::Result<Vec<(String, String)>> {
     let hook_value = hook::parse_hook(input)?;
-    let Hook::Tool(tool_hook) = hook_value else {
-        return Ok(Vec::new());
+    let tool = match &hook_value {
+        Hook::Claude(ClaudeShape::PreToolUse(h)) => &h.tool,
+        Hook::Claude(ClaudeShape::PostToolUse(h)) => &h.tool,
+        Hook::Crush(CrushShape::PreToolUse(h)) => &h.tool,
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => return Ok(Vec::new()),
     };
-    Ok(tool_to_mutations(&tool_hook.tool)
+    Ok(tool_to_mutations(tool)
         .into_iter()
         .map(|(kind, path)| (tool_kind_label(kind).to_string(), path))
         .collect())
@@ -240,11 +264,10 @@ pub fn extract_mutations(input: &str) -> anyhow::Result<Vec<(String, String)>> {
 pub fn classify_event(input: &str) -> anyhow::Result<&'static str> {
     let hook_value = hook::parse_hook(input)?;
     Ok(match hook_value {
-        Hook::Tool(tool_hook) => match tool_hook.hook_event_name {
-            HookEvent::PreToolUse => "PreToolUse",
-            HookEvent::PostToolUse => "PostToolUse",
-        },
-        Hook::UserPrompt => "UserPromptSubmit",
+        Hook::Claude(ClaudeShape::PreToolUse(_)) => "PreToolUse",
+        Hook::Claude(ClaudeShape::PostToolUse(_)) => "PostToolUse",
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => "UserPromptSubmit",
+        Hook::Crush(CrushShape::PreToolUse(_)) => "PreToolUse",
     })
 }
 
@@ -259,10 +282,13 @@ fn tool_kind_label(kind: ToolKind) -> &'static str {
 
 fn tool_to_mutations(tool: &Tool) -> Vec<(ToolKind, String)> {
     match tool {
-        Tool::Edit(f) => file_input_mutation(ToolKind::Edit, f),
-        Tool::Write(f) => file_input_mutation(ToolKind::Write, f),
-        Tool::MultiEdit(f) => file_input_mutation(ToolKind::MultiEdit, f),
-        Tool::Other { name, input } => other_tool_mutations(name, input),
+        Tool::Known(KnownTool::Edit(f)) => file_input_mutation(ToolKind::Edit, f),
+        Tool::Known(KnownTool::Write(f)) => file_input_mutation(ToolKind::Write, f),
+        Tool::Known(KnownTool::MultiEdit(f)) => file_input_mutation(ToolKind::MultiEdit, f),
+        Tool::Other {
+            tool_name,
+            tool_input,
+        } => other_tool_mutations(tool_name, tool_input),
         _ => Vec::new(),
     }
 }
@@ -375,8 +401,8 @@ mod tests {
     #[test]
     fn extracts_codex_apply_patch_paths() {
         let tool = Tool::Other {
-            name: "apply_patch".into(),
-            input: serde_json::json!({
+            tool_name: "apply_patch".into(),
+            tool_input: serde_json::json!({
                 "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n*** Add File: src/new.rs\n*** Delete File: src/old.rs\n*** Move to: src/moved.rs\n*** End Patch\n"
             }),
         };
@@ -395,8 +421,8 @@ mod tests {
     #[test]
     fn extracts_lowercase_tool_path_variants() {
         let tool = Tool::Other {
-            name: "write".into(),
-            input: serde_json::json!({ "path": "README.md" }),
+            tool_name: "write".into(),
+            tool_input: serde_json::json!({ "path": "README.md" }),
         };
 
         assert_eq!(
@@ -408,8 +434,8 @@ mod tests {
     #[test]
     fn extracts_crush_edit_file_path() {
         let tool = Tool::Other {
-            name: "edit".into(),
-            input: serde_json::json!({ "file_path": "src/foo.rs" }),
+            tool_name: "edit".into(),
+            tool_input: serde_json::json!({ "file_path": "src/foo.rs" }),
         };
 
         assert_eq!(
@@ -421,8 +447,8 @@ mod tests {
     #[test]
     fn extracts_crush_write_file_path() {
         let tool = Tool::Other {
-            name: "write".into(),
-            input: serde_json::json!({ "file_path": "README.md" }),
+            tool_name: "write".into(),
+            tool_input: serde_json::json!({ "file_path": "README.md" }),
         };
 
         assert_eq!(
@@ -434,8 +460,8 @@ mod tests {
     #[test]
     fn extracts_crush_multiedit_file_path() {
         let tool = Tool::Other {
-            name: "multiedit".into(),
-            input: serde_json::json!({
+            tool_name: "multiedit".into(),
+            tool_input: serde_json::json!({
                 "file_path": "config.toml",
                 "edits": [{ "old_string": "a", "new_string": "b" }]
             }),
@@ -450,8 +476,8 @@ mod tests {
     #[test]
     fn ignores_apply_patch_without_file_markers() {
         let tool = Tool::Other {
-            name: "apply_patch".into(),
-            input: serde_json::json!({
+            tool_name: "apply_patch".into(),
+            tool_input: serde_json::json!({
                 "patch": "*** Begin Patch\n@@\n-no file header\n+still no file header\n*** End Patch\n"
             }),
         };
