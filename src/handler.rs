@@ -361,6 +361,48 @@ mod tests {
     }
 
     #[test]
+    fn extracts_crush_edit_file_path() {
+        let tool = Tool::Other {
+            name: "edit".into(),
+            input: serde_json::json!({ "file_path": "src/foo.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Edit, "src/foo.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_crush_write_file_path() {
+        let tool = Tool::Other {
+            name: "write".into(),
+            input: serde_json::json!({ "file_path": "README.md" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Write, "README.md".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_crush_multiedit_file_path() {
+        let tool = Tool::Other {
+            name: "multiedit".into(),
+            input: serde_json::json!({
+                "file_path": "config.toml",
+                "edits": [{ "old_string": "a", "new_string": "b" }]
+            }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::MultiEdit, "config.toml".into())]
+        );
+    }
+
+    #[test]
     fn ignores_apply_patch_without_file_markers() {
         let tool = Tool::Other {
             name: "apply_patch".into(),

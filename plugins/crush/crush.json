@@ -1,0 +1,12 @@
+{
+  "$schema": "https://charm.land/crush.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(edit|write|multiedit)$",
+        "command": "sidekick hook",
+        "timeout": 10
+      }
+    ]
+  }
+}

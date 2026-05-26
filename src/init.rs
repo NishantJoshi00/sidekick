@@ -16,8 +16,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::doctor::{
-    self, AliasStatus, CLAUDE_ACCENT, CODEX_ACCENT, OPENCODE_ACCENT, PI_ACCENT, SPINNER_FRAMES,
-    Theme,
+    self, AliasStatus, CLAUDE_ACCENT, CODEX_ACCENT, CRUSH_ACCENT, OPENCODE_ACCENT, PI_ACCENT,
+    SPINNER_FRAMES, Theme,
 };
 use crate::fix::{self, Fix};
 
@@ -122,6 +122,14 @@ fn build_steps() -> Vec<Step> {
             "Lets the pi agent respect your unsaved Neovim buffers before it writes.",
             Some(PI_ACCENT),
             fix::pi_fix(),
+        ));
+    }
+    if doctor::uses_crush() {
+        steps.push(make_step(
+            "Crush hook",
+            "Lets Crush respect your unsaved Neovim buffers before it edits.",
+            Some(CRUSH_ACCENT),
+            fix::crush_fix(),
         ));
     }
 

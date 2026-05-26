@@ -27,6 +27,7 @@ pub(crate) const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
 pub(crate) const CODEX_ACCENT: &str = "38;2;16;185;129"; // #10B981
 pub(crate) const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
 pub(crate) const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
+pub(crate) const CRUSH_ACCENT: &str = "38;2;236;72;153"; // #EC4899
 
 enum Status {
     Pass,
@@ -154,6 +155,14 @@ fn build_rows() -> Vec<Row> {
             "pi extension",
             check_pi_extension,
             Some(PI_ACCENT),
+            false,
+        ));
+    }
+    if uses_crush() {
+        rows.push(row(
+            "Crush hook",
+            check_crush_hook,
+            Some(CRUSH_ACCENT),
             false,
         ));
     }
@@ -364,6 +373,9 @@ fn check_harnesses() -> Check {
     }
     if uses_pi() {
         found.push("pi");
+    }
+    if uses_crush() {
+        found.push("Crush");
     }
 
     if found.is_empty() {
@@ -857,6 +869,72 @@ pub(crate) fn uses_pi() -> bool {
         || dirs::home_dir()
             .map(|h| h.join(".pi").join("agent").is_dir())
             .unwrap_or(false)
+}
+
+/// Whether this machine looks like a Crush user.
+pub(crate) fn uses_crush() -> bool {
+    binary_on_path("crush")
+        || dirs::home_dir()
+            .map(|h| h.join(".config").join("crush").is_dir())
+            .unwrap_or(false)
+}
+
+/// Candidate Crush config files in precedence order: project local first,
+/// then global (`$CRUSH_GLOBAL_CONFIG` overrides the default global path).
+pub(crate) fn crush_config_candidates() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(".crush.json"));
+        candidates.push(cwd.join("crush.json"));
+    }
+
+    if let Some(path) = std::env::var_os("CRUSH_GLOBAL_CONFIG") {
+        candidates.push(PathBuf::from(path));
+    } else if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".config").join("crush").join("crush.json"));
+    }
+
+    candidates
+}
+
+/// Config files that already wire up `sidekick hook` for Crush.
+pub(crate) fn crush_hook_files() -> Vec<PathBuf> {
+    let mut matched: Vec<PathBuf> = crush_config_candidates()
+        .into_iter()
+        .filter(|p| file_mentions_sidekick_hook(p))
+        .collect();
+    matched.sort();
+    matched.dedup();
+    matched
+}
+
+fn check_crush_hook() -> Check {
+    let matched = crush_hook_files();
+
+    if !matched.is_empty() {
+        let detail = matched
+            .iter()
+            .map(|p| display_path(p))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Check {
+            label: "Crush hook registered".into(),
+            detail: Some(detail),
+            status: Status::Pass,
+        };
+    }
+
+    Check {
+        label: "Crush hook not registered".into(),
+        detail: None,
+        status: Status::Fail {
+            remedy: vec![
+                "Run `sidekick doctor --fix` to merge the hook into ~/.config/crush/crush.json"
+                    .into(),
+            ],
+        },
+    }
 }
 
 fn check_shell_alias() -> Check {

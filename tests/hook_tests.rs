@@ -204,6 +204,42 @@ fn test_parse_codex_tool_hook_with_nullable_transcript() {
 }
 
 #[test]
+fn test_parse_crush_pre_tool_use_edit_hook() {
+    // Crush emits `event` instead of `hook_event_name`, omits `transcript_path`
+    // entirely, and uses lowercase tool names.
+    let json = r#"{
+        "event": "PreToolUse",
+        "session_id": "crush-test-session",
+        "cwd": "/test/dir",
+        "tool_name": "edit",
+        "tool_input": {
+            "file_path": "test.txt",
+            "old_string": "old",
+            "new_string": "new"
+        }
+    }"#;
+
+    let hook = parse_hook(json).expect("Failed to parse Crush hook");
+
+    let Hook::Tool(h) = hook else {
+        panic!("Expected Tool hook");
+    };
+
+    assert_eq!(h.session_id, "crush-test-session");
+    assert_eq!(h.cwd, "/test/dir");
+    assert_eq!(h.hook_event_name, HookEvent::PreToolUse);
+    assert_eq!(h.transcript_path, None);
+
+    match h.tool {
+        Tool::Other { name, input } => {
+            assert_eq!(name, "edit");
+            assert_eq!(input["file_path"], "test.txt");
+        }
+        _ => panic!("Expected generic Other tool for lowercase 'edit'"),
+    }
+}
+
+#[test]
 fn test_hook_output_with_additional_context() {
     let output = HookOutput::new().with_additional_context("Selected code here");
 

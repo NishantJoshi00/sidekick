@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Sidekick is a Rust-based CLI tool that provides two main functionalities:
-1. **AI Agent Hook Handler**: Intercepts Claude Code, Codex, opencode, and pi tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
+1. **AI Agent Hook Handler**: Intercepts Claude Code, Codex, opencode, pi, and Crush tool calls to prevent file modifications when files are being edited in Neovim with unsaved changes across multiple Neovim instances
 2. **Neovim Integration**: Launches Neovim instances with deterministic Unix socket paths based on the current working directory and process ID (using blake3 hashing)
 
 ## Architecture

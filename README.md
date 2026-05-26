@@ -4,7 +4,7 @@
 
 # Sidekick
 
-**Protects your unsaved Neovim work from Claude Code, Codex, opencode, and pi.**
+**Protects your unsaved Neovim work from Claude Code, Codex, opencode, pi, and Crush.**
 
 <p align="center">
   <a href="https://claude.com/claude-code"><img src="https://github.com/anthropics.png?size=160" alt="Claude Code" height="48" width="48"></a>
@@ -169,6 +169,29 @@ For a per-project install, use `<project>/.pi/extensions/sidekick.ts`. Run `side
 
 </details>
 
+<details>
+<summary><b>Use with Crush</b></summary>
+
+Crush registers hooks directly in `crush.json` — no plugin file to bundle. After installing the `sidekick` binary, let Sidekick merge the hook into your global Crush config:
+
+```bash
+sidekick init
+```
+
+or:
+
+```bash
+sidekick doctor --fix
+```
+
+The repair merges a `PreToolUse` hook against `^(edit|write|multiedit)$` into `~/.config/crush/crush.json`, preserving every other key.
+
+Crush only emits `PreToolUse`, so the buffer-protect path is covered but two pieces of the sidekick contract are intentionally absent: there is no post-edit buffer refresh, and no visual-selection injection on prompt submit. Both are upstream limitations, not sidekick configuration.
+
+Run `sidekick doctor` to confirm. See [`plugins/crush/`](plugins/crush/) for details.
+
+</details>
+
 ## Usage
 
 Just use `nvim`. The shell alias routes through sidekick so the hook can find your editor.
@@ -205,7 +228,7 @@ Neovim with RPC + Lua support, a Unix-like system, and at least one supported AI
 
 ## What's next
 
-Sidekick is Phase 1 — Neovim plus Claude Code, Codex, opencode, and pi. The longer arc is a small protocol any editor can expose and any AI tool can query before writing: *is this file being edited by a human right now?* [PHILOSOPHY.md](PHILOSOPHY.md) has the roadmap (Helix, Zed, VS Code; Aider, Goose, Continue) and the extension points.
+Sidekick is Phase 1 — Neovim plus Claude Code, Codex, opencode, pi, and Crush. The longer arc is a small protocol any editor can expose and any AI tool can query before writing: *is this file being edited by a human right now?* [PHILOSOPHY.md](PHILOSOPHY.md) has the roadmap (Helix, Zed, VS Code; Aider, Goose, Continue) and the extension points.
 
 ## Contributing
 

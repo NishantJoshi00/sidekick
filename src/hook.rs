@@ -44,8 +44,11 @@ pub enum HookEvent {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ToolHook {
     pub session_id: String,
+    #[serde(default)]
     pub transcript_path: Option<String>,
     pub cwd: String,
+    // Crush sends `event` instead of `hook_event_name`.
+    #[serde(alias = "event")]
     pub hook_event_name: HookEvent,
     #[serde(flatten)]
     pub tool: Tool,
@@ -177,6 +180,7 @@ pub fn parse_hook(input: &str) -> anyhow::Result<Hook> {
         serde_json::from_str(input).context("couldn't parse hook input")?;
     let event_name = value
         .get("hook_event_name")
+        .or_else(|| value.get("event"))
         .and_then(|v| v.as_str())
         .context("hook is missing event name")?;
 

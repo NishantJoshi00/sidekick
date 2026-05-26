@@ -105,6 +105,7 @@ fn collect() -> Vec<Fix> {
     fixes.extend(codex_fixes());
     fixes.extend(opencode_fix());
     fixes.extend(pi_fix());
+    fixes.extend(crush_fix());
     fixes.extend(alias_fix());
     fixes
 }
@@ -283,6 +284,53 @@ pub(crate) fn claude_fix() -> Option<Fix> {
         before,
         after,
     ))
+}
+
+pub(crate) fn crush_fix() -> Option<Fix> {
+    if !doctor::uses_crush() || !doctor::crush_hook_files().is_empty() {
+        return None;
+    }
+    let path = dirs::home_dir()?
+        .join(".config")
+        .join("crush")
+        .join("crush.json");
+    let before = std::fs::read_to_string(&path).ok();
+    let after = crush_settings_after(before.as_deref()).ok()?;
+    Some(Fix::single("Register the Crush hook", path, before, after))
+}
+
+/// Merge sidekick's PreToolUse hook into a Crush `crush.json`, preserving any
+/// existing keys (and the user's own hooks) untouched.
+fn crush_settings_after(before: Option<&str>) -> Result<String> {
+    let mut root: serde_json::Value = match before {
+        Some(s) if !s.trim().is_empty() => {
+            serde_json::from_str(s).context("~/.config/crush/crush.json isn't valid JSON")?
+        }
+        _ => serde_json::json!({ "$schema": "https://charm.land/crush.json" }),
+    };
+    {
+        let obj = root
+            .as_object_mut()
+            .context("~/.config/crush/crush.json isn't a JSON object")?;
+        let hooks = obj
+            .entry("hooks")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .context("`hooks` in crush.json isn't an object")?;
+        let arr = hooks
+            .entry("PreToolUse")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .context("`hooks.PreToolUse` in crush.json isn't an array")?;
+        arr.push(serde_json::json!({
+            "matcher": "^(edit|write|multiedit)$",
+            "command": "sidekick hook",
+            "timeout": 10,
+        }));
+    }
+    let mut s = serde_json::to_string_pretty(&root)?;
+    s.push('\n');
+    Ok(s)
 }
 
 pub(crate) fn alias_fix() -> Option<Fix> {
@@ -788,6 +836,7 @@ fn truncate_text(s: &str) -> String {
 mod tests {
     use super::{
         claude_settings_after, codex_config_after, codex_fixes_for, codex_marketplace_after,
+        crush_settings_after,
     };
 
     #[test]
@@ -872,6 +921,45 @@ other = true
         assert_eq!(v["interface"]["displayName"], "Mine");
         assert_eq!(v["plugins"][0]["name"], "sidekick");
         assert_eq!(v["plugins"][0]["source"]["path"], "./plugins/sidekick");
+    }
+
+    #[test]
+    fn merges_crush_hook_into_empty_config() {
+        let out = crush_settings_after(None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(v["$schema"], "https://charm.land/crush.json");
+        let arr = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["matcher"], "^(edit|write|multiedit)$");
+        assert_eq!(arr[0]["command"], "sidekick hook");
+        assert_eq!(arr[0]["timeout"], 10);
+    }
+
+    #[test]
+    fn keeps_existing_crush_hooks_and_keys() {
+        let before = r#"{
+  "models": { "default": "claude" },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "^bash$", "command": "./hooks/safety.sh" }
+    ]
+  }
+}"#;
+        let out = crush_settings_after(Some(before)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(v["models"]["default"], "claude");
+        let arr = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["matcher"], "^bash$");
+        assert_eq!(arr[0]["command"], "./hooks/safety.sh");
+        assert_eq!(arr[1]["command"], "sidekick hook");
+    }
+
+    #[test]
+    fn rejects_invalid_crush_json() {
+        assert!(crush_settings_after(Some("{ not json")).is_err());
     }
 
     #[test]
