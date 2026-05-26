@@ -41,6 +41,66 @@ struct Check {
     status: Status,
 }
 
+/// What sidekick can do with this harness. Drives the doctor's `support:`
+/// line and the README capability matrix. A `true` cell means sidekick fully
+/// exercises that capability on this harness; `false` is an upstream gap.
+#[derive(Clone, Copy)]
+pub(crate) struct HarnessCapabilities {
+    pub(crate) edit_deny: bool,
+    pub(crate) buffer_refresh: bool,
+    pub(crate) selection_inject: bool,
+}
+
+impl HarnessCapabilities {
+    fn is_full(&self) -> bool {
+        self.edit_deny && self.buffer_refresh && self.selection_inject
+    }
+}
+
+pub(crate) const CLAUDE_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
+    edit_deny: true,
+    buffer_refresh: true,
+    selection_inject: true,
+};
+pub(crate) const CODEX_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
+    edit_deny: true,
+    buffer_refresh: true,
+    selection_inject: true,
+};
+pub(crate) const OPENCODE_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
+    edit_deny: true,
+    buffer_refresh: true,
+    selection_inject: true,
+};
+pub(crate) const PI_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
+    edit_deny: true,
+    buffer_refresh: true,
+    selection_inject: true,
+};
+pub(crate) const CRUSH_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
+    edit_deny: true,
+    buffer_refresh: false,
+    selection_inject: false,
+};
+
+struct HarnessMeta {
+    name: &'static str,
+    accent: &'static str,
+    capabilities: HarnessCapabilities,
+}
+
+enum RowKind {
+    /// Flat row — the existing rendering (marker + label + detail).
+    Normal,
+    /// A section title with no marker and no spinner. Always renders as just
+    /// its label; the `run` function still gates downstream rows by failing
+    /// when no harness was detected.
+    Subheader,
+    /// A per-harness row that renders nested under the AI-harnesses subheader:
+    /// harness name → dim support line → status row → paths.
+    Harness(HarnessMeta),
+}
+
 struct Row {
     pending_label: &'static str,
     run: fn() -> Check,
@@ -50,6 +110,7 @@ struct Row {
     accent: Option<&'static str>,
     /// A prerequisite failure halts the cascade; other failures don't.
     prerequisite: bool,
+    kind: RowKind,
 }
 
 impl Row {
@@ -114,6 +175,41 @@ fn row(
         skipped: false,
         accent,
         prerequisite,
+        kind: RowKind::Normal,
+    }
+}
+
+fn subheader_row(label: &'static str, run: fn() -> Check) -> Row {
+    Row {
+        pending_label: label,
+        run,
+        result: None,
+        skipped: false,
+        accent: None,
+        prerequisite: false,
+        kind: RowKind::Subheader,
+    }
+}
+
+fn harness_row(
+    pending_label: &'static str,
+    run: fn() -> Check,
+    name: &'static str,
+    accent: &'static str,
+    capabilities: HarnessCapabilities,
+) -> Row {
+    Row {
+        pending_label,
+        run,
+        result: None,
+        skipped: false,
+        accent: Some(accent),
+        prerequisite: false,
+        kind: RowKind::Harness(HarnessMeta {
+            name,
+            accent,
+            capabilities,
+        }),
     }
 }
 
@@ -123,47 +219,52 @@ fn build_rows() -> Vec<Row> {
     let mut rows = vec![
         row("sidekick version", check_version, None, false),
         row("nvim on PATH", check_nvim_on_path, None, true),
-        row("AI harnesses", check_harnesses, None, false),
+        subheader_row("AI harnesses", check_harnesses),
     ];
 
     if uses_claude_code() {
-        rows.push(row(
-            "Claude Code hook registered",
+        rows.push(harness_row(
+            "hook registered",
             check_claude_hook,
-            Some(CLAUDE_ACCENT),
-            false,
+            "Claude Code",
+            CLAUDE_ACCENT,
+            CLAUDE_CAPABILITIES,
         ));
     }
     if uses_codex() {
-        rows.push(row(
-            "Codex plugin",
+        rows.push(harness_row(
+            "plugin installed",
             check_codex_plugin,
-            Some(CODEX_ACCENT),
-            false,
+            "Codex",
+            CODEX_ACCENT,
+            CODEX_CAPABILITIES,
         ));
     }
     if uses_opencode() {
-        rows.push(row(
-            "opencode plugin",
+        rows.push(harness_row(
+            "plugin installed",
             check_opencode_plugin,
-            Some(OPENCODE_ACCENT),
-            false,
+            "opencode",
+            OPENCODE_ACCENT,
+            OPENCODE_CAPABILITIES,
         ));
     }
     if uses_pi() {
-        rows.push(row(
-            "pi extension",
+        rows.push(harness_row(
+            "extension installed",
             check_pi_extension,
-            Some(PI_ACCENT),
-            false,
+            "pi",
+            PI_ACCENT,
+            PI_CAPABILITIES,
         ));
     }
     if uses_crush() {
-        rows.push(row(
-            "Crush hook",
+        rows.push(harness_row(
+            "hook registered",
             check_crush_hook,
-            Some(CRUSH_ACCENT),
-            false,
+            "Crush",
+            CRUSH_ACCENT,
+            CRUSH_CAPABILITIES,
         ));
     }
 
@@ -265,11 +366,20 @@ fn render_block_to(
     writeln!(w)?;
     height += 1;
 
+    let mut prev_was_harness = false;
     for row in rows {
+        let is_harness = matches!(row.kind, RowKind::Harness(_));
+        // Exiting the harness section — one blank to separate it from the
+        // post-harness rows (nvim alias, sockets, last activity).
+        if prev_was_harness && !is_harness {
+            writeln!(w)?;
+            height += 1;
+        }
         for line in render_row(theme, row, spin) {
             writeln!(w, "{line}")?;
             height += 1;
         }
+        prev_was_harness = is_harness;
     }
 
     writeln!(w)?;
@@ -284,6 +394,14 @@ fn render_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
         return vec![format!("  {marker} {body}")];
     }
 
+    match &row.kind {
+        RowKind::Subheader => render_subheader(theme, row),
+        RowKind::Harness(meta) => render_harness_row(theme, row, meta, spin),
+        RowKind::Normal => render_normal_row(theme, row, spin),
+    }
+}
+
+fn render_normal_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
     match &row.result {
         None => {
             let marker = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
@@ -313,6 +431,89 @@ fn render_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
             out
         }
     }
+}
+
+/// Section title — no marker, no spinner, just the label, padded above and
+/// below so the nested harness blocks read as their own section. When the
+/// discovery check returns Fail (no AI harnesses detected), we surface that
+/// failure inline with a remedy in place of the empty section.
+fn render_subheader(theme: &Theme, row: &Row) -> Vec<String> {
+    let mut out = vec![String::new()];
+    match &row.result {
+        None => out.push(format!("  {}", row.pending_label)),
+        Some(check) => match &check.status {
+            Status::Fail { remedy } => {
+                let marker = theme.red("✗");
+                out.push(format!("  {marker} {}", check.label));
+                for line in remedy {
+                    out.push(format!("      {line}"));
+                }
+            }
+            _ => out.push(format!("  {}", row.pending_label)),
+        },
+    }
+    out
+}
+
+fn render_harness_row(theme: &Theme, row: &Row, meta: &HarnessMeta, spin: usize) -> Vec<String> {
+    // Pending: one line per harness so the report doesn't paint the full
+    // nested structure up front. The block expands to 4+ lines only once
+    // this row's check resolves.
+    let Some(check) = &row.result else {
+        let marker = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
+        return vec![format!("    {marker} {}", meta.name)];
+    };
+
+    let (bullet, name) = match check.status {
+        Status::Pass => (
+            theme.wrap(meta.accent, "·"),
+            theme.wrap(meta.accent, meta.name),
+        ),
+        _ => (theme.dim("·"), meta.name.to_string()),
+    };
+    let mut out = vec![format!("    {bullet} {name}")];
+
+    // Dim support line: `✓ full support` when complete, or `✗ <feature>`
+    // for each missing capability when partial.
+    out.push(format!(
+        "      {}",
+        theme.dim(&support_line(&meta.capabilities))
+    ));
+
+    let marker = match &check.status {
+        Status::Pass => theme.green("✓"),
+        Status::Fail { .. } => theme.red("✗"),
+        Status::Info => theme.dim("·"),
+    };
+    out.push(format!("      {marker} {}", check.label));
+    if let Some(detail) = &check.detail {
+        for line in detail.lines() {
+            out.push(format!("          {}", theme.dim(line)));
+        }
+    }
+    if let Status::Fail { remedy } = &check.status {
+        for line in remedy {
+            out.push(format!("          {line}"));
+        }
+    }
+    out
+}
+
+fn support_line(caps: &HarnessCapabilities) -> String {
+    if caps.is_full() {
+        return "✓ full support".to_string();
+    }
+    let mut gaps = Vec::new();
+    if !caps.edit_deny {
+        gaps.push("✗ edit deny");
+    }
+    if !caps.buffer_refresh {
+        gaps.push("✗ buffer refresh");
+    }
+    if !caps.selection_inject {
+        gaps.push("✗ selection injection");
+    }
+    gaps.join("  ")
 }
 
 fn check_version() -> Check {
@@ -436,14 +637,14 @@ fn check_claude_hook() -> Check {
             .collect::<Vec<_>>()
             .join("\n");
         return Check {
-            label: "Claude Code hook registered".into(),
+            label: "hook registered".into(),
             detail: Some(detail),
             status: Status::Pass,
         };
     }
 
     Check {
-        label: "Claude Code hook not registered".into(),
+        label: "hook not registered".into(),
         detail: None,
         status: Status::Fail {
             remedy: vec![
@@ -606,7 +807,7 @@ fn check_codex_plugin() -> Check {
     let direct_hooks = codex_hook_files();
     if !direct_hooks.is_empty() {
         return Check {
-            label: "Codex hook registered".into(),
+            label: "hook registered".into(),
             detail: Some(
                 direct_hooks
                     .iter()
@@ -620,7 +821,7 @@ fn check_codex_plugin() -> Check {
 
     if codex_plugin_is_configured() {
         return Check {
-            label: "Codex plugin installed".into(),
+            label: "plugin installed".into(),
             detail: Some(
                 codex_plugin_detail_files()
                     .iter()
@@ -644,7 +845,7 @@ fn check_codex_plugin() -> Check {
     }
 
     Check {
-        label: "Codex plugin not installed".into(),
+        label: "plugin not installed".into(),
         detail: None,
         status: Status::Fail { remedy },
     }
@@ -684,7 +885,7 @@ fn check_opencode_plugin() -> Check {
 
     if matched.is_empty() {
         return Check {
-            label: "opencode plugin not installed".into(),
+            label: "plugin not installed".into(),
             detail: None,
             status: Status::Fail {
                 remedy: vec![
@@ -708,13 +909,13 @@ fn check_opencode_plugin() -> Check {
 
     if all_current {
         Check {
-            label: "opencode plugin installed".into(),
+            label: "plugin installed".into(),
             detail: Some(detail),
             status: Status::Pass,
         }
     } else {
         Check {
-            label: "opencode plugin out of sync".into(),
+            label: "plugin out of sync".into(),
             detail: Some(detail),
             status: Status::Fail {
                 remedy: vec!["The installed plugin differs from this sidekick build.".into()],
@@ -755,7 +956,7 @@ fn check_pi_extension() -> Check {
 
     if matched.is_empty() {
         return Check {
-            label: "pi extension not installed".into(),
+            label: "extension not installed".into(),
             detail: None,
             status: Status::Fail {
                 remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
@@ -777,13 +978,13 @@ fn check_pi_extension() -> Check {
 
     if all_current {
         Check {
-            label: "pi extension installed".into(),
+            label: "extension installed".into(),
             detail: Some(detail),
             status: Status::Pass,
         }
     } else {
         Check {
-            label: "pi extension out of sync".into(),
+            label: "extension out of sync".into(),
             detail: Some(detail),
             status: Status::Fail {
                 remedy: vec!["The installed extension differs from this sidekick build.".into()],
@@ -919,14 +1120,14 @@ fn check_crush_hook() -> Check {
             .collect::<Vec<_>>()
             .join("\n");
         return Check {
-            label: "Crush hook registered".into(),
+            label: "hook registered".into(),
             detail: Some(detail),
             status: Status::Pass,
         };
     }
 
     Check {
-        label: "Crush hook not registered".into(),
+        label: "hook not registered".into(),
         detail: None,
         status: Status::Fail {
             remedy: vec![

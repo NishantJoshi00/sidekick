@@ -114,6 +114,21 @@ The `UserPromptSubmit` entry is optional. It is the one that adds your Neovim vi
 
 </details>
 
+## What each harness supports
+
+`sidekick doctor` prints this matrix per harness; here it is in one place. A
+`✓` is a feature sidekick exercises fully through that harness's hook
+surface; a `—` is an upstream gap (the harness doesn't expose the hook event
+sidekick would need).
+
+| Harness     | Edit deny | Buffer refresh | Selection injection |
+| ---         | :-:       | :-:            | :-:                 |
+| Claude Code | ✓         | ✓              | ✓                   |
+| Codex       | ✓         | ✓              | ✓                   |
+| opencode    | ✓         | ✓              | ✓                   |
+| pi          | ✓         | ✓              | ✓                   |
+| Crush       | ✓         | —              | —                   |
+
 <details>
 <summary><b>Use with Codex</b></summary>
 
