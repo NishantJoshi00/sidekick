@@ -6,7 +6,15 @@
 
 **Protects your unsaved Neovim work from Claude Code, Codex, opencode, and pi.**
 
-[![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code) [![Codex](https://img.shields.io/badge/Codex-000000?logo=openai&logoColor=white)](https://github.com/openai/codex) [![opencode](https://img.shields.io/badge/opencode-FF6B6B)](https://opencode.ai) [![pi](https://img.shields.io/badge/pi-6366F1)](https://github.com/mariozechner/pi)
+<p align="center">
+  <a href="https://claude.com/claude-code"><img src="https://github.com/anthropics.png?size=160" alt="Claude Code" height="48" width="48"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=160" alt="Codex" height="48" width="48"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://opencode.ai"><img src="https://opencode.ai/apple-touch-icon-v3.png" alt="opencode" height="48" width="48"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://pi.dev"><img src="https://pi.dev/logo-auto.svg" alt="pi" height="48" width="48"></a>
+</p>
 
 *A conduit between Neovim and your AI agents — so they wait when you're typing.*
 
