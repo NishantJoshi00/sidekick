@@ -6,6 +6,8 @@
 
 **Protects your unsaved Neovim work from Claude Code, Codex, opencode, and pi.**
 
+[![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code) [![Codex](https://img.shields.io/badge/Codex-000000?logo=openai&logoColor=white)](https://github.com/openai/codex) [![opencode](https://img.shields.io/badge/opencode-FF6B6B)](https://opencode.ai) [![pi](https://img.shields.io/badge/pi-6366F1)](https://github.com/mariozechner/pi)
+
 *A conduit between Neovim and your AI agents — so they wait when you're typing.*
 
 [![crates.io](https://img.shields.io/crates/v/sidekick.svg)](https://crates.io/crates/sidekick) [![MIT License](https://img.shields.io/crates/l/sidekick.svg)](LICENSE)
