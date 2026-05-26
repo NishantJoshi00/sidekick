@@ -212,6 +212,51 @@ fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOu
     HookOutput::new()
 }
 
+/// Extract the file mutations a hook envelope would trigger, as
+/// `(kind, path)` tuples with stable string labels (`"edit"`, `"write"`,
+/// `"multiedit"`).
+///
+/// This is the behavioral contract integration tests assert against: given
+/// JSON in, what files would sidekick check or refresh? Returning string
+/// labels (not internal enum names) keeps the test API resilient to
+/// internal type renames.
+#[allow(dead_code)] // called from tests/integration.rs (separate crate)
+pub fn extract_mutations(input: &str) -> anyhow::Result<Vec<(String, String)>> {
+    let hook_value = hook::parse_hook(input)?;
+    let Hook::Tool(tool_hook) = hook_value else {
+        return Ok(Vec::new());
+    };
+    Ok(tool_to_mutations(&tool_hook.tool)
+        .into_iter()
+        .map(|(kind, path)| (tool_kind_label(kind).to_string(), path))
+        .collect())
+}
+
+/// Classify the event in a hook envelope as one of `"PreToolUse"`,
+/// `"PostToolUse"`, or `"UserPromptSubmit"`. Wrong event routing means the
+/// wrong code path in the handler, so this is the second behavioral
+/// invariant tests assert against.
+#[allow(dead_code)] // called from tests/integration.rs (separate crate)
+pub fn classify_event(input: &str) -> anyhow::Result<&'static str> {
+    let hook_value = hook::parse_hook(input)?;
+    Ok(match hook_value {
+        Hook::Tool(tool_hook) => match tool_hook.hook_event_name {
+            HookEvent::PreToolUse => "PreToolUse",
+            HookEvent::PostToolUse => "PostToolUse",
+        },
+        Hook::UserPrompt => "UserPromptSubmit",
+    })
+}
+
+#[allow(dead_code)] // called from extract_mutations (test crate path)
+fn tool_kind_label(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Edit => "edit",
+        ToolKind::Write => "write",
+        ToolKind::MultiEdit => "multiedit",
+    }
+}
+
 fn tool_to_mutations(tool: &Tool) -> Vec<(ToolKind, String)> {
     match tool {
         Tool::Edit(f) => file_input_mutation(ToolKind::Edit, f),
