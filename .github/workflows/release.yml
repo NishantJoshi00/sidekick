@@ -2,11 +2,12 @@ name: Release
 
 # Manual release: publish to crates.io, then tag.
 #
-# Bump the version in Cargo.toml, Cargo.lock, and .claude-plugin/plugin.json
-# in a normal commit to main FIRST. Then run this workflow and type that same
-# version. Everything that can fail is checked before the irreversible steps:
+# Bump the version in Cargo.toml, Cargo.lock, and both plugin.json files
+# (.claude-plugin and plugins/codex/.codex-plugin) in a normal commit to main
+# FIRST, then wait for CI + Version Check to go green on that commit, then run
+# this workflow and type that same version. Pipeline:
 #
-#   verify -> test -> publish -> tag
+#   prereqs (CI + Version Check on SHA must be green) -> verify -> test -> publish -> tag
 #
 # If any guard or the publish fails, nothing is tagged. Fix the cause and
 # re-run -- no retagging.
@@ -21,10 +22,49 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  prereqs:
+    name: Require CI + Version Check green on ${{ github.sha }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify sibling workflows succeeded on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          fail=0
+          for wf in "ci.yml" "version-check.yml"; do
+            run=$(gh run list --repo "$REPO" --workflow "$wf" --commit "$SHA" --limit 1 --json status,conclusion,databaseId --jq '.[0] // empty')
+            if [ -z "$run" ]; then
+              echo "❌ No $wf run found on $SHA -- wait for it to start (or check it ran)."
+              fail=1
+              continue
+            fi
+            s=$(echo "$run" | jq -r .status)
+            c=$(echo "$run" | jq -r .conclusion)
+            id=$(echo "$run" | jq -r .databaseId)
+            if [ "$s" != "completed" ]; then
+              echo "❌ $wf run $id on $SHA is $s -- wait for it to finish, then re-dispatch."
+              fail=1
+              continue
+            fi
+            if [ "$c" != "success" ]; then
+              echo "❌ $wf run $id on $SHA concluded $c -- fix it on main, then re-dispatch."
+              fail=1
+              continue
+            fi
+            echo "✅ $wf run $id on $SHA: success"
+          done
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+
   release:
     name: Release v${{ inputs.version }}
+    needs: prereqs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,10 +89,11 @@ jobs:
           INPUT="${{ inputs.version }}"
           CARGO=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           PLUGIN=$(grep '"version":' .claude-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+          CODEX_PLUGIN=$(grep '"version":' plugins/codex/.codex-plugin/plugin.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
           LOCK=$(grep -A1 '^name = "sidekick"' Cargo.lock | grep '^version' | sed 's/version = "\(.*\)"/\1/')
 
           fail=0
-          for pair in "Cargo.toml:$CARGO" ".claude-plugin/plugin.json:$PLUGIN" "Cargo.lock:$LOCK"; do
+          for pair in "Cargo.toml:$CARGO" ".claude-plugin/plugin.json:$PLUGIN" "plugins/codex/.codex-plugin/plugin.json:$CODEX_PLUGIN" "Cargo.lock:$LOCK"; do
             name=${pair%%:*}; val=${pair#*:}
             if [ "$val" != "$INPUT" ]; then
               echo "❌ $name version ($val) does not match input ($INPUT)"
