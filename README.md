@@ -44,84 +44,16 @@ Everything else stays the same. You keep using `nvim` like normal.
 
 ## Install
 
-The one-liner installs the binary with Cargo, registers Claude Code edit/refresh hooks, and adds the shell alias. Pipe through `less` first if you want to read it.
-
 ```bash
-curl -sSL https://raw.githubusercontent.com/NishantJoshi00/sidekick/main/scripts/install.sh | bash
-```
-
-Then restart your shell, or source the rc file the installer updated, and verify with `sidekick doctor`:
-
-```
-  sidekick doctor
-
-  ✓ sidekick v0.6.0 on PATH
-      ~/.cargo/bin/sidekick
-  ✓ NVIM v0.10.0 on PATH
-  · AI harnesses: Claude Code, Codex
-  ✓ Claude Code hook registered
-  ✓ Codex plugin installed
-  ✓ nvim alias: nvim → sidekick neovim (zsh)
-  · no Neovim opened here
-  · last activity: never
-```
-
-If a row fails, `sidekick doctor --fix` offers consent-gated repairs for the Claude Code hook, Codex plugin, opencode plugin, pi extension, and `nvim` alias. It shows the diff before writing anything.
-
-The installer covers protection and buffer refresh for Claude Code. For Claude Code prompt-context injection, install the Claude Code plugin or add the `UserPromptSubmit` hook shown below.
-
-For Codex, run `sidekick init` or `sidekick doctor --fix` after installing the binary. Sidekick installs the Codex plugin into your personal Codex marketplace, enables `plugin_hooks`, and enables `sidekick@personal`.
-
-<details>
-<summary><b>Manual install (cargo + Claude Code plugin)</b></summary>
-
-```bash
-# 1. Install the binary
 cargo install sidekick
-
-# 2. Inside Claude Code, register the hooks bundled in this repo
-/plugin marketplace add NishantJoshi00/claude-plugins
-/plugin install sidekick@nishant-plugins
-
-# 3. Add the shell alias to ~/.zshrc or ~/.bashrc
-alias nvim='sidekick neovim'
+sidekick init
 ```
 
-Don't have Rust? `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
+`sidekick init` walks through every AI harness it finds on your machine, wires the hooks, sets up the `nvim` alias, and skips anything already done. Re-run any time — it's idempotent.
 
-</details>
+Verify with `sidekick doctor`. Want to wire things by hand? See [docs/SETUP.md](docs/SETUP.md).
 
-<details>
-<summary><b>Manual Claude Code hook configuration (no plugin)</b></summary>
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "MultiEdit|Edit|Write", "hooks": [{ "type": "command", "command": "sidekick hook" }] }
-    ],
-    "PostToolUse": [
-      { "matcher": "MultiEdit|Edit|Write", "hooks": [{ "type": "command", "command": "sidekick hook" }] }
-    ],
-    "UserPromptSubmit": [
-      { "matcher": "", "hooks": [{ "type": "command", "command": "sidekick hook" }] }
-    ]
-  }
-}
-```
-
-The `UserPromptSubmit` entry is optional. It is the one that adds your Neovim visual selection to Claude's prompt context.
-
-</details>
-
-## What each harness supports
-
-`sidekick doctor` prints this matrix per harness; here it is in one place. A
-`✓` is a feature sidekick exercises fully through that harness's hook
-surface; a `—` is an upstream gap (the harness doesn't expose the hook event
-sidekick would need).
+## Harness support
 
 | Harness     | Edit deny | Buffer refresh | Selection injection |
 | ---         | :-:       | :-:            | :-:                 |
@@ -131,83 +63,7 @@ sidekick would need).
 | pi          | ✓         | ✓              | ✓                   |
 | Crush       | ✓         | —              | —                   |
 
-<details>
-<summary><b>Use with Codex</b></summary>
-
-Codex uses plugin-bundled hooks. After installing the `sidekick` binary, let Sidekick wire the plugin and config:
-
-```bash
-sidekick init
-```
-
-or:
-
-```bash
-sidekick doctor --fix
-```
-
-The repair writes the plugin to `~/plugins/sidekick`, registers it in `~/.agents/plugins/marketplace.json`, enables `[features].plugin_hooks = true`, and enables `[plugins."sidekick@personal"].enabled = true` in `~/.codex/config.toml`.
-
-Codex may ask you to review and trust the new hook before it runs. Run `sidekick doctor` to confirm. See [`plugins/codex/`](plugins/codex/) for details.
-
-</details>
-
-<details>
-<summary><b>Use with opencode</b></summary>
-
-opencode uses a plugin system instead of CLI hooks. After installing the `sidekick` binary, drop the plugin into your global opencode config:
-
-```bash
-mkdir -p ~/.config/opencode/plugin
-curl -sSL https://raw.githubusercontent.com/NishantJoshi00/sidekick/main/plugins/opencode/sidekick.ts \
-  -o ~/.config/opencode/plugin/sidekick.ts
-```
-
-opencode loads it at startup. If `sidekick` is not on `PATH`, the plugin no-ops rather than blocking opencode.
-
-For a per-project install, use `<project>/.opencode/plugin/sidekick.ts`. Run `sidekick doctor` to confirm. See [`plugins/opencode/`](plugins/opencode/) for details.
-
-</details>
-
-<details>
-<summary><b>Use with pi</b></summary>
-
-pi uses a TypeScript extension system instead of CLI hooks. After installing the `sidekick` binary, drop the extension into your global pi config:
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-curl -sSL https://raw.githubusercontent.com/NishantJoshi00/sidekick/main/plugins/pi/sidekick.ts \
-  -o ~/.pi/agent/extensions/sidekick.ts
-```
-
-pi loads it at startup. If `sidekick` is not on `PATH`, the extension no-ops rather than blocking pi.
-
-For a per-project install, use `<project>/.pi/extensions/sidekick.ts`. Run `sidekick doctor` to confirm. See [`plugins/pi/`](plugins/pi/) for details.
-
-</details>
-
-<details>
-<summary><b>Use with Crush</b></summary>
-
-Crush registers hooks directly in `crush.json` — no plugin file to bundle. After installing the `sidekick` binary, let Sidekick merge the hook into your global Crush config:
-
-```bash
-sidekick init
-```
-
-or:
-
-```bash
-sidekick doctor --fix
-```
-
-The repair merges a `PreToolUse` hook against `^(edit|write|multiedit)$` into `~/.config/crush/crush.json`, preserving every other key.
-
-Crush only emits `PreToolUse`, so the buffer-protect path is covered but two pieces of the sidekick contract are intentionally absent: there is no post-edit buffer refresh, and no visual-selection injection on prompt submit. Both are upstream limitations, not sidekick configuration.
-
-Run `sidekick doctor` to confirm. See [`plugins/crush/`](plugins/crush/) for details.
-
-</details>
+A `—` is an upstream gap: the harness doesn't expose the hook event sidekick would need.
 
 ## Usage
 
@@ -217,31 +73,32 @@ Just use `nvim`. The shell alias routes through sidekick so the hook can find yo
 nvim src/main.rs
 ```
 
-If you do not want the alias, run `sidekick neovim <args>` directly. You won't notice anything different until Claude Code, Codex, opencode, or pi tries to overwrite unsaved work, at which point sidekick denies the edit and tells the agent why.
+If you do not want the alias, run `sidekick neovim <args>` directly. You won't notice anything different until an agent tries to overwrite unsaved work, at which point sidekick denies the edit and tells the agent why.
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
 | `sidekick neovim <args>` | Launches Neovim with a per-directory socket the hook can find. Aliased as `nvim`. |
-| `sidekick hook` | Reads hook JSON on stdin and decides allow/deny, refreshes buffers, and returns visual-selection context. You don't run this directly — Claude Code and Codex do, and the opencode/pi bridges pipe to it. |
-| `sidekick doctor [--fix] [--no-color]` | Checks your install: binary on PATH, nvim on PATH, AI harnesses present, hooks/plugins registered, alias active, sockets open in this directory, last hook decision. `--fix` offers consent-gated repairs where possible. |
+| `sidekick init` | Guided setup. Wires every detected AI harness and the `nvim` alias. |
+| `sidekick doctor [--fix] [--no-color]` | Health check. `--fix` offers consent-gated repairs and shows the diff before writing. |
+| `sidekick stats [--range week\|month\|year\|all]` | Local activity dashboard from append-only JSONL events. Nothing leaves your machine. |
 | `sidekick demo` | Plays the demo cast inline in a ratatui frame. Useful for showing a coworker. |
-| `sidekick stats [--range week\|month\|year\|all] [--no-color]` | Local activity dashboard built from append-only JSONL events: launches, allows, blocks, refreshes, and top files. Nothing leaves your machine. |
+| `sidekick hook` | Internal. Your AI harness calls it; you don't. |
 
 ## How it works
 
 1. `sidekick neovim` launches `nvim --listen /tmp/<blake3(cwd)>-<pid>.sock`. The socket path is deterministic per canonical working directory and unique per process, so the hook can find every Neovim instance opened from the same project.
-2. Claude Code and Codex call `sidekick hook` before file edits. The opencode and pi bridges do the equivalent for their `edit` and `write` tools. The hook globs `/tmp/<blake3(cwd)>-*.sock`, connects to reachable instances over msgpack-rpc with a short timeout, and asks whether each target is active with unsaved changes. If yes, the edit is denied; otherwise it is allowed. If no Neovim socket is found, sidekick degrades to allow.
+2. Before file edits, the agent calls `sidekick hook`. The hook globs `/tmp/<blake3(cwd)>-*.sock`, connects to reachable instances over msgpack-rpc with a short timeout, and asks whether each target is active with unsaved changes. If yes, the edit is denied; otherwise allowed. If no Neovim socket is found, sidekick degrades to allow.
 3. After an edit lands, the hook tells every reachable Neovim instance with the file open to reload it. Cursor positions and visible windows are preserved.
-4. On prompt submission, if Neovim has a live visual selection or recent visual marks, sidekick returns fenced context blocks like `[Selected from path:start-end]`. Claude Code and Codex receive them as additional context; opencode and pi append them to the submitted prompt text.
-5. Decisions, refreshes, Neovim launches, and stats views are appended locally to `sidekick/events.jsonl` under your OS data directory. Writes are best-effort and analytics never block the hook path.
+4. On prompt submission, if Neovim has a live visual selection or recent visual marks, sidekick returns fenced context blocks like `[Selected from path:start-end]`. Claude Code and Codex receive them as additional context; the opencode and pi bridges append them to the submitted prompt text.
+5. Decisions, refreshes, Neovim launches, and stats views are appended locally to `sidekick/events.jsonl` under your OS data directory. Writes are best-effort and never block the hook path.
 
 No daemons, no background service. Just one CLI, Neovim RPC sockets in `/tmp`, and optional per-tool bridge files.
 
 ## Requirements
 
-Neovim with RPC + Lua support, a Unix-like system, and at least one supported AI harness: Claude Code, Codex, opencode, or pi. Rust/Cargo is required for `cargo install` or building from source; the install script also needs `python3` or `python` to merge Claude Code settings.
+Neovim with RPC + Lua support, a Unix-like system, and at least one supported AI harness: Claude Code, Codex, opencode, pi, or Crush. Rust/Cargo is required for `cargo install`.
 
 ## What's next
 
@@ -249,4 +106,4 @@ Sidekick is Phase 1 — Neovim plus Claude Code, Codex, opencode, pi, and Crush.
 
 ## Contributing
 
-Issues and PRs welcome. If you want to add a new editor or AI tool, the `Action` trait in `src/action.rs` is the contract — [PHILOSOPHY.md](PHILOSOPHY.md) covers the architecture.
+Issues and PRs welcome. New editor support starts at the `Editor` trait in `src/editor.rs`; new AI harness support starts at the `Harness` trait in `src/harness.rs`. [PHILOSOPHY.md](PHILOSOPHY.md) covers the architecture.

@@ -47,8 +47,8 @@ impl Harness for ClaudeCode {
             Err(HarnessError::NotConfigured {
                 label: "hook not registered".into(),
                 remedy: vec![
-                    "Install the plugin:  /plugin install sidekick@nishant-plugins".into(),
-                    "Or add `sidekick hook` to ~/.claude/settings.json".into(),
+                    "Run `sidekick doctor --fix` to register the hooks in ~/.claude/settings.json"
+                        .into(),
                 ],
             })
         } else {

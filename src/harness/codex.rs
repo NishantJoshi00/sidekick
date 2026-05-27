@@ -60,20 +60,11 @@ impl Harness for Codex {
             });
         }
 
-        let mut remedy = Vec::new();
-        if !plugin_hooks_enabled() {
-            remedy.push("Enable Codex plugin hooks in ~/.codex/config.toml".into());
-        }
-        if !plugin_enabled() {
-            remedy.push("Enable the Sidekick Codex plugin as `sidekick@personal`".into());
-        }
-        if !plugin_files_current() {
-            remedy.push("Install the Sidekick Codex plugin into your personal marketplace".into());
-        }
-
         Err(HarnessError::NotConfigured {
             label: "plugin not installed".into(),
-            remedy,
+            remedy: vec![
+                "Run `sidekick doctor --fix` to install and enable the Codex plugin".into(),
+            ],
         })
     }
 

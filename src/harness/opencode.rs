@@ -44,7 +44,8 @@ impl Harness for Opencode {
             return Err(HarnessError::NotConfigured {
                 label: "plugin not installed".into(),
                 remedy: vec![
-                    "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
+                    "Run `sidekick doctor --fix` to install the plugin into ~/.config/opencode/plugin/sidekick.ts"
+                        .into(),
                 ],
             });
         }

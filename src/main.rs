@@ -23,7 +23,7 @@ use analytics::{TimeRange, aggregate};
 
 #[derive(Parser)]
 #[command(name = "sidekick")]
-#[command(about = "Protects your unsaved Neovim work from AI coding agents.", long_about = None)]
+#[command(about = "Keeps Neovim and your AI coding agents on the same page.", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

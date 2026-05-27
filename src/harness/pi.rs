@@ -43,7 +43,10 @@ impl Harness for Pi {
         if matched.is_empty() {
             return Err(HarnessError::NotConfigured {
                 label: "extension not installed".into(),
-                remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
+                remedy: vec![
+                    "Run `sidekick doctor --fix` to install the extension into ~/.pi/agent/extensions/sidekick.ts"
+                        .into(),
+                ],
             });
         }
         let all_current = matched
