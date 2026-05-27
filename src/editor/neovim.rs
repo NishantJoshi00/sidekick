@@ -1,29 +1,29 @@
 //! Neovim integration for performing editor actions via RPC.
 //!
-//! This module provides the `NeovimAction` implementation that connects to a running
+//! This module provides the `NeovimEditor` implementation that connects to a running
 //! Neovim instance via Unix socket to check buffer status, refresh buffers, and send messages.
 
 mod buffer;
 mod connection;
 mod lua;
 
-use crate::action::{Action, BufferStatus, EditorContext};
+use crate::editor::{BufferStatus, Editor, EditorContext};
 use anyhow::Result;
 use neovim_lib::NeovimApi;
 use std::path::PathBuf;
 
 /// Neovim action implementation that supports multiple instances
-pub struct NeovimAction {
+pub struct NeovimEditor {
     socket_paths: Vec<PathBuf>,
 }
 
-impl NeovimAction {
+impl NeovimEditor {
     pub fn new(socket_paths: Vec<PathBuf>) -> Self {
         Self { socket_paths }
     }
 }
 
-impl Action for NeovimAction {
+impl Editor for NeovimEditor {
     fn buffer_status(&self, file_path: &str) -> Result<BufferStatus> {
         let status = connection::try_fold_instances(
             &self.socket_paths,

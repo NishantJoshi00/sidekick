@@ -1,17 +1,17 @@
 //! Editor action abstractions for interacting with text editors.
 //!
-//! This module defines the `Action` trait for performing operations on editor buffers,
+//! This module defines the `Editor` trait for performing operations on editor buffers,
 //! such as checking buffer status, refreshing content, and sending messages.
 //!
 //! # Example
 //!
 //! ```no_run
-//! use sidekick::action::{Action, neovim::NeovimAction};
+//! use sidekick::editor::{Editor, neovim::NeovimEditor};
 //! use std::path::PathBuf;
 //!
 //! // Create action for Neovim instances
 //! let sockets = vec![PathBuf::from("/tmp/socket.sock")];
-//! let action = NeovimAction::new(sockets);
+//! let action = NeovimEditor::new(sockets);
 //!
 //! // Check buffer status
 //! let status = action.buffer_status("file.txt").unwrap();
@@ -45,7 +45,7 @@ pub struct EditorContext {
 }
 
 /// Trait for editor actions
-pub trait Action {
+pub trait Editor {
     /// Get the status of a buffer
     fn buffer_status(&self, file_path: &str) -> anyhow::Result<BufferStatus>;
 

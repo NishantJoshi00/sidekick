@@ -17,12 +17,12 @@
 //! # Example: Using as a Library
 //!
 //! ```no_run
-//! use sidekick::action::{Action, neovim::NeovimAction};
+//! use sidekick::editor::{Editor, neovim::NeovimEditor};
 //! use sidekick::utils;
 //!
 //! // Find Neovim instances in current directory
 //! let sockets = utils::find_matching_sockets().unwrap();
-//! let action = NeovimAction::new(sockets);
+//! let action = NeovimEditor::new(sockets);
 //!
 //! // Check if file can be modified
 //! let status = action.buffer_status("file.txt").unwrap();
@@ -31,9 +31,9 @@
 //! }
 //! ```
 
-pub mod action;
 pub mod analytics;
 pub mod constants;
+pub mod editor;
 pub mod handler;
 pub mod hook;
 pub mod utils;

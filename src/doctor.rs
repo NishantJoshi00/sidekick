@@ -4,9 +4,13 @@
 //! and they resolve one at a time. The first failure halts the cascade and
 //! the remaining rows render as skipped. When stdout is not a terminal we
 //! just run everything sequentially and print the final block.
+//!
+//! Per-harness rows are driven by [`crate::harness::registry`] — each
+//! harness is a unit struct implementing [`crate::harness::Harness`].
+//! Doctor doesn't branch on harness identity itself.
 
 use std::io::{self, IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -15,19 +19,12 @@ use chrono::{DateTime, Utc};
 
 use crate::analytics::event::{Decision, Event, ToolKind};
 use crate::analytics::store;
+use crate::harness::{self, Harness, HarnessCapabilities, HarnessError, HarnessOk};
 use crate::utils;
 
 pub(crate) const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const FRAMES_PER_CHECK: u32 = 3;
 const FRAME_DELAY: Duration = Duration::from_millis(70);
-
-// Brand accents (truecolor ANSI params) for the AI-integration rows, applied
-// to the label only when that integration is configured correctly.
-pub(crate) const CLAUDE_ACCENT: &str = "38;2;217;119;87"; // #D97757
-pub(crate) const CODEX_ACCENT: &str = "38;2;16;185;129"; // #10B981
-pub(crate) const OPENCODE_ACCENT: &str = "38;2;91;155;213"; // #5B9BD5
-pub(crate) const PI_ACCENT: &str = "38;2;157;124;216"; // #9D7CD8
-pub(crate) const CRUSH_ACCENT: &str = "38;2;236;72;153"; // #EC4899
 
 enum Status {
     Pass,
@@ -41,73 +38,43 @@ struct Check {
     status: Status,
 }
 
-/// What sidekick can do with this harness. Drives the doctor's `support:`
-/// line and the README capability matrix. A `true` cell means sidekick fully
-/// exercises that capability on this harness; `false` is an upstream gap.
-#[derive(Clone, Copy)]
-pub(crate) struct HarnessCapabilities {
-    pub(crate) edit_deny: bool,
-    pub(crate) buffer_refresh: bool,
-    pub(crate) selection_inject: bool,
-}
-
-impl HarnessCapabilities {
-    fn is_full(&self) -> bool {
-        self.edit_deny && self.buffer_refresh && self.selection_inject
-    }
-}
-
-pub(crate) const CLAUDE_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
-    edit_deny: true,
-    buffer_refresh: true,
-    selection_inject: true,
-};
-pub(crate) const CODEX_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
-    edit_deny: true,
-    buffer_refresh: true,
-    selection_inject: true,
-};
-pub(crate) const OPENCODE_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
-    edit_deny: true,
-    buffer_refresh: true,
-    selection_inject: true,
-};
-pub(crate) const PI_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
-    edit_deny: true,
-    buffer_refresh: true,
-    selection_inject: true,
-};
-pub(crate) const CRUSH_CAPABILITIES: HarnessCapabilities = HarnessCapabilities {
-    edit_deny: true,
-    buffer_refresh: false,
-    selection_inject: false,
-};
-
-struct HarnessMeta {
-    name: &'static str,
-    accent: &'static str,
-    capabilities: HarnessCapabilities,
-}
-
 enum RowKind {
     /// Flat row — the existing rendering (marker + label + detail).
-    Normal,
+    Normal {
+        label: &'static str,
+        run: fn() -> Check,
+        /// Truecolor ANSI params for the label, applied only on Pass.
+        accent: Option<&'static str>,
+    },
     /// A section title with no marker and no spinner. Always renders as just
     /// its label; the `run` function still gates downstream rows by failing
     /// when no harness was detected.
-    Subheader,
+    Subheader {
+        label: &'static str,
+        run: fn() -> Check,
+    },
     /// A per-harness row that renders nested under the AI-harnesses subheader:
     /// harness name → dim support line → status row → paths.
-    Harness(HarnessMeta),
+    Harness(Box<dyn Harness>),
+}
+
+impl RowKind {
+    fn label(&self) -> &'static str {
+        match self {
+            RowKind::Normal { label, .. } | RowKind::Subheader { label, .. } => label,
+            RowKind::Harness(h) => h.name(),
+        }
+    }
+}
+
+enum RowResult {
+    Standard(Check),
+    Harness(Result<HarnessOk, HarnessError>),
 }
 
 struct Row {
-    pending_label: &'static str,
-    run: fn() -> Check,
-    result: Option<Check>,
+    result: Option<RowResult>,
     skipped: bool,
-    /// Truecolor ANSI params for the label, applied only when the check passes.
-    accent: Option<&'static str>,
     /// A prerequisite failure halts the cascade; other failures don't.
     prerequisite: bool,
     kind: RowKind,
@@ -117,17 +84,27 @@ impl Row {
     fn is_failed(&self) -> bool {
         matches!(
             self.result,
-            Some(Check {
+            Some(RowResult::Standard(Check {
                 status: Status::Fail { .. },
                 ..
-            })
-        )
+            }))
+        ) || matches!(self.result, Some(RowResult::Harness(Err(_))))
     }
 
     /// A failed prerequisite (e.g. missing `nvim`) makes the rest moot, so the
     /// remaining rows are skipped. A failed integration check does not.
     fn halts_cascade(&self) -> bool {
         self.prerequisite && self.is_failed()
+    }
+
+    fn run(&mut self) {
+        let result = match &self.kind {
+            RowKind::Normal { run, .. } | RowKind::Subheader { run, .. } => {
+                RowResult::Standard(run())
+            }
+            RowKind::Harness(h) => RowResult::Harness(h.check()),
+        };
+        self.result = Some(result);
     }
 }
 
@@ -147,7 +124,6 @@ pub fn run(no_color: bool, fix: bool) -> anyhow::Result<bool> {
 
     let any_failed = rows.iter().any(Row::is_failed);
 
-    // When something's wrong, point at --fix — unless --fix is already running.
     if any_failed && !fix {
         let mut stdout = io::stdout().lock();
         writeln!(
@@ -162,120 +138,61 @@ pub fn run(no_color: bool, fix: bool) -> anyhow::Result<bool> {
     Ok(any_failed)
 }
 
-fn row(
-    pending_label: &'static str,
+fn normal_row(
+    label: &'static str,
     run: fn() -> Check,
     accent: Option<&'static str>,
     prerequisite: bool,
 ) -> Row {
     Row {
-        pending_label,
-        run,
         result: None,
         skipped: false,
-        accent,
         prerequisite,
-        kind: RowKind::Normal,
+        kind: RowKind::Normal { label, run, accent },
     }
 }
 
 fn subheader_row(label: &'static str, run: fn() -> Check) -> Row {
     Row {
-        pending_label: label,
-        run,
         result: None,
         skipped: false,
-        accent: None,
         prerequisite: false,
-        kind: RowKind::Subheader,
+        kind: RowKind::Subheader { label, run },
     }
 }
 
-fn harness_row(
-    pending_label: &'static str,
-    run: fn() -> Check,
-    name: &'static str,
-    accent: &'static str,
-    capabilities: HarnessCapabilities,
-) -> Row {
+fn harness_row(harness: Box<dyn Harness>) -> Row {
     Row {
-        pending_label,
-        run,
         result: None,
         skipped: false,
-        accent: Some(accent),
         prerequisite: false,
-        kind: RowKind::Harness(HarnessMeta {
-            name,
-            accent,
-            capabilities,
-        }),
+        kind: RowKind::Harness(harness),
     }
 }
 
-/// The discovery step runs first; the per-harness rows below it are built only
-/// for the AI harnesses actually present, so an absent harness gets no row.
+/// The discovery step runs first; per-harness rows are added only for
+/// installed harnesses, so an absent harness gets no row.
 fn build_rows() -> Vec<Row> {
     let mut rows = vec![
-        row("sidekick version", check_version, None, false),
-        row("nvim on PATH", check_nvim_on_path, None, true),
+        normal_row("sidekick version", check_version, None, false),
+        normal_row("nvim on PATH", check_nvim_on_path, None, true),
         subheader_row("AI harnesses", check_harnesses),
     ];
 
-    if uses_claude_code() {
-        rows.push(harness_row(
-            "hook registered",
-            check_claude_hook,
-            "Claude Code",
-            CLAUDE_ACCENT,
-            CLAUDE_CAPABILITIES,
-        ));
-    }
-    if uses_codex() {
-        rows.push(harness_row(
-            "plugin installed",
-            check_codex_plugin,
-            "Codex",
-            CODEX_ACCENT,
-            CODEX_CAPABILITIES,
-        ));
-    }
-    if uses_opencode() {
-        rows.push(harness_row(
-            "plugin installed",
-            check_opencode_plugin,
-            "opencode",
-            OPENCODE_ACCENT,
-            OPENCODE_CAPABILITIES,
-        ));
-    }
-    if uses_pi() {
-        rows.push(harness_row(
-            "extension installed",
-            check_pi_extension,
-            "pi",
-            PI_ACCENT,
-            PI_CAPABILITIES,
-        ));
-    }
-    if uses_crush() {
-        rows.push(harness_row(
-            "hook registered",
-            check_crush_hook,
-            "Crush",
-            CRUSH_ACCENT,
-            CRUSH_CAPABILITIES,
-        ));
+    for harness in harness::registry::all() {
+        if harness.is_installed() {
+            rows.push(harness_row(harness));
+        }
     }
 
-    rows.push(row("nvim alias", check_shell_alias, None, false));
-    rows.push(row(
+    rows.push(normal_row("nvim alias", check_shell_alias, None, false));
+    rows.push(normal_row(
         "Neovim sockets opened here",
         check_sockets,
         None,
         false,
     ));
-    rows.push(row("last activity", check_last_hook, None, false));
+    rows.push(normal_row("last activity", check_last_hook, None, false));
     rows
 }
 
@@ -284,7 +201,6 @@ fn animate(theme: &Theme, rows: &mut [Row]) -> io::Result<()> {
     let mut last_height = 0usize;
     let mut spin = 0usize;
 
-    // Hide cursor while we redraw; restore on the way out (incl. failure path).
     write!(stdout, "\x1b[?25l")?;
     let result = animate_inner(&mut stdout, theme, rows, &mut last_height, &mut spin);
     write!(stdout, "\x1b[?25h")?;
@@ -308,7 +224,7 @@ fn animate_inner(
             redraw(stdout, theme, rows, *spin, last_height)?;
         }
 
-        rows[i].result = Some((rows[i].run)());
+        rows[i].run();
 
         if rows[i].halts_cascade() {
             for row in rows.iter_mut().skip(i + 1) {
@@ -345,7 +261,7 @@ fn run_static(rows: &mut [Row]) {
             row.skipped = true;
             continue;
         }
-        row.result = Some((row.run)());
+        row.run();
         if row.halts_cascade() {
             failed = true;
         }
@@ -369,8 +285,6 @@ fn render_block_to(
     let mut prev_was_harness = false;
     for row in rows {
         let is_harness = matches!(row.kind, RowKind::Harness(_));
-        // Exiting the harness section — one blank to separate it from the
-        // post-harness rows (nvim alias, sockets, last activity).
         if prev_was_harness && !is_harness {
             writeln!(w)?;
             height += 1;
@@ -390,30 +304,38 @@ fn render_block_to(
 fn render_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
     if row.skipped {
         let marker = theme.dim("⊝");
-        let body = theme.dim(&format!("{} (skipped)", row.pending_label));
+        let body = theme.dim(&format!("{} (skipped)", row.kind.label()));
         return vec![format!("  {marker} {body}")];
     }
 
     match &row.kind {
-        RowKind::Subheader => render_subheader(theme, row),
-        RowKind::Harness(meta) => render_harness_row(theme, row, meta, spin),
-        RowKind::Normal => render_normal_row(theme, row, spin),
+        RowKind::Subheader { label, .. } => render_subheader(theme, label, &row.result),
+        RowKind::Harness(h) => render_harness_row(theme, h.as_ref(), &row.result, spin),
+        RowKind::Normal { label, accent, .. } => {
+            render_normal_row(theme, label, *accent, &row.result, spin)
+        }
     }
 }
 
-fn render_normal_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
-    match &row.result {
+fn render_normal_row(
+    theme: &Theme,
+    label: &'static str,
+    accent: Option<&'static str>,
+    result: &Option<RowResult>,
+    spin: usize,
+) -> Vec<String> {
+    match result {
         None => {
             let marker = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
-            vec![format!("  {marker} {}", row.pending_label)]
+            vec![format!("  {marker} {label}")]
         }
-        Some(check) => {
+        Some(RowResult::Standard(check)) => {
             let marker = match &check.status {
                 Status::Pass => theme.green("✓"),
                 Status::Fail { .. } => theme.red("✗"),
                 Status::Info => theme.dim("·"),
             };
-            let label = match (&check.status, row.accent) {
+            let label = match (&check.status, accent) {
                 (Status::Pass, Some(code)) => theme.wrap(code, &check.label),
                 _ => check.label.clone(),
             };
@@ -430,18 +352,18 @@ fn render_normal_row(theme: &Theme, row: &Row, spin: usize) -> Vec<String> {
             }
             out
         }
+        Some(RowResult::Harness(_)) => unreachable!("normal row produces Standard result"),
     }
 }
 
-/// Section title — no marker, no spinner, just the label, padded above and
-/// below so the nested harness blocks read as their own section. When the
-/// discovery check returns Fail (no AI harnesses detected), we surface that
-/// failure inline with a remedy in place of the empty section.
-fn render_subheader(theme: &Theme, row: &Row) -> Vec<String> {
+/// Section title — no marker, no spinner, just the label, padded above. When
+/// the discovery check returns Fail (no AI harnesses detected), we surface
+/// that failure inline with a remedy in place of the empty section.
+fn render_subheader(theme: &Theme, label: &'static str, result: &Option<RowResult>) -> Vec<String> {
     let mut out = vec![String::new()];
-    match &row.result {
-        None => out.push(format!("  {}", row.pending_label)),
-        Some(check) => match &check.status {
+    match result {
+        None => out.push(format!("  {label}")),
+        Some(RowResult::Standard(check)) => match &check.status {
             Status::Fail { remedy } => {
                 let marker = theme.red("✗");
                 out.push(format!("  {marker} {}", check.label));
@@ -449,27 +371,33 @@ fn render_subheader(theme: &Theme, row: &Row) -> Vec<String> {
                     out.push(format!("      {line}"));
                 }
             }
-            _ => out.push(format!("  {}", row.pending_label)),
+            _ => out.push(format!("  {label}")),
         },
+        Some(RowResult::Harness(_)) => unreachable!("subheader produces Standard result"),
     }
     out
 }
 
-fn render_harness_row(theme: &Theme, row: &Row, meta: &HarnessMeta, spin: usize) -> Vec<String> {
+fn render_harness_row(
+    theme: &Theme,
+    harness: &dyn Harness,
+    result: &Option<RowResult>,
+    spin: usize,
+) -> Vec<String> {
     // Pending: one line per harness so the report doesn't paint the full
     // nested structure up front. The block expands to 4+ lines only once
     // this row's check resolves.
-    let Some(check) = &row.result else {
+    let Some(RowResult::Harness(outcome)) = result else {
         let marker = theme.cyan(SPINNER_FRAMES[spin % SPINNER_FRAMES.len()]);
-        return vec![format!("    {marker} {}", meta.name)];
+        return vec![format!("    {marker} {}", harness.name())];
     };
 
-    let (bullet, name) = match check.status {
-        Status::Pass => (
-            theme.wrap(meta.accent, "·"),
-            theme.wrap(meta.accent, meta.name),
+    let (bullet, name) = match outcome {
+        Ok(_) => (
+            theme.wrap(harness.accent(), "·"),
+            theme.wrap(harness.accent(), harness.name()),
         ),
-        _ => (theme.dim("·"), meta.name.to_string()),
+        Err(_) => (theme.dim("·"), harness.name().to_string()),
     };
     let mut out = vec![format!("    {bullet} {name}")];
 
@@ -477,23 +405,37 @@ fn render_harness_row(theme: &Theme, row: &Row, meta: &HarnessMeta, spin: usize)
     // for each missing capability when partial.
     out.push(format!(
         "      {}",
-        theme.dim(&support_line(&meta.capabilities))
+        theme.dim(&support_line(&harness.capabilities()))
     ));
 
-    let marker = match &check.status {
-        Status::Pass => theme.green("✓"),
-        Status::Fail { .. } => theme.red("✗"),
-        Status::Info => theme.dim("·"),
-    };
-    out.push(format!("      {marker} {}", check.label));
-    if let Some(detail) = &check.detail {
-        for line in detail.lines() {
-            out.push(format!("          {}", theme.dim(line)));
+    match outcome {
+        Ok(ok) => {
+            let marker = theme.green("✓");
+            out.push(format!("      {marker} {}", ok.label));
+            for path in &ok.paths {
+                out.push(format!("          {}", theme.dim(&display_path(path))));
+            }
         }
-    }
-    if let Status::Fail { remedy } = &check.status {
-        for line in remedy {
-            out.push(format!("          {line}"));
+        Err(HarnessError::NotConfigured { label, remedy }) => {
+            let marker = theme.red("✗");
+            out.push(format!("      {marker} {label}"));
+            for line in remedy {
+                out.push(format!("          {line}"));
+            }
+        }
+        Err(HarnessError::OutOfSync {
+            label,
+            paths,
+            remedy,
+        }) => {
+            let marker = theme.red("✗");
+            out.push(format!("      {marker} {label}"));
+            for path in paths {
+                out.push(format!("          {}", theme.dim(&display_path(path))));
+            }
+            for line in remedy {
+                out.push(format!("          {line}"));
+            }
         }
     }
     out
@@ -559,458 +501,37 @@ fn check_nvim_on_path() -> Check {
     }
 }
 
-/// Discover which AI harnesses are present. Drives both this row's summary and
-/// (via the same `uses_*` checks) which per-harness rows get built at all.
+/// Discover which AI harnesses are present. Drives both the subheader's
+/// failure-state copy and (via the same trait method) which per-harness
+/// rows get built at all.
 fn check_harnesses() -> Check {
-    let mut found: Vec<&str> = Vec::new();
-    if uses_claude_code() {
-        found.push("Claude Code");
-    }
-    if uses_codex() {
-        found.push("Codex");
-    }
-    if uses_opencode() {
-        found.push("opencode");
-    }
-    if uses_pi() {
-        found.push("pi");
-    }
-    if uses_crush() {
-        found.push("Crush");
-    }
+    let names: Vec<&'static str> = harness::registry::all()
+        .iter()
+        .filter(|h| h.is_installed())
+        .map(|h| h.name())
+        .collect();
 
-    if found.is_empty() {
+    if names.is_empty() {
         Check {
             label: "no AI harness found".into(),
             detail: None,
             status: Status::Fail {
                 remedy: vec![
-                    "Install Claude Code, Codex, opencode, or pi — sidekick has nothing to guard without one"
+                    "Install Claude Code, Codex, opencode, pi, or Crush — sidekick has nothing to guard without one"
                         .into(),
                 ],
             },
         }
     } else {
+        // The Info Check is only used for the subheader's success-state
+        // dummy. render_subheader prints the section title from the static
+        // pending_label, not from this check's label.
         Check {
-            label: format!("AI harnesses: {}", found.join(", ")),
+            label: String::new(),
             detail: None,
             status: Status::Info,
         }
     }
-}
-
-/// Config files that already wire up `sidekick hook` for Claude Code.
-pub(crate) fn claude_hook_files() -> Vec<PathBuf> {
-    let mut matched: Vec<PathBuf> = Vec::new();
-
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join(".claude").join("settings.json"));
-        candidates.push(home.join(".claude").join("settings.local.json"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join(".claude").join("settings.json"));
-    }
-
-    for path in &candidates {
-        if file_mentions_sidekick_hook(path) {
-            matched.push(path.clone());
-        }
-    }
-
-    if let Some(home) = dirs::home_dir() {
-        walk_for_json_mentioning_hook(&home.join(".claude").join("plugins"), &mut matched, 4);
-    }
-
-    matched.sort();
-    matched.dedup();
-    matched
-}
-
-fn check_claude_hook() -> Check {
-    let matched = claude_hook_files();
-
-    if !matched.is_empty() {
-        let detail = matched
-            .iter()
-            .map(|p| display_path(p))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Check {
-            label: "hook registered".into(),
-            detail: Some(detail),
-            status: Status::Pass,
-        };
-    }
-
-    Check {
-        label: "hook not registered".into(),
-        detail: None,
-        status: Status::Fail {
-            remedy: vec![
-                "Install the plugin:  /plugin install sidekick@nishant-plugins".into(),
-                "Or add `sidekick hook` to ~/.claude/settings.json".into(),
-            ],
-        },
-    }
-}
-
-pub(crate) fn codex_home() -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
-        .unwrap_or_else(|| PathBuf::from(".codex"))
-}
-
-fn codex_config_file() -> PathBuf {
-    codex_home().join("config.toml")
-}
-
-pub(crate) fn codex_hook_files() -> Vec<PathBuf> {
-    let mut matched = Vec::new();
-
-    for path in [
-        codex_config_file(),
-        codex_home().join("hooks.json"),
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(".codex")
-            .join("hooks.json"),
-    ] {
-        if file_mentions_sidekick_hook(&path) {
-            matched.push(path);
-        }
-    }
-
-    matched.sort();
-    matched.dedup();
-    matched
-}
-
-pub(crate) fn codex_hook_is_configured() -> bool {
-    !codex_hook_files().is_empty() || codex_plugin_is_configured()
-}
-
-fn codex_plugin_detail_files() -> Vec<PathBuf> {
-    let mut matched = Vec::new();
-
-    if let Some(home) = dirs::home_dir() {
-        for path in [
-            home.join("plugins")
-                .join("sidekick")
-                .join(".codex-plugin")
-                .join("plugin.json"),
-            home.join("plugins").join("sidekick").join("hooks.json"),
-            home.join(".agents")
-                .join("plugins")
-                .join("marketplace.json"),
-        ] {
-            if path.is_file() {
-                matched.push(path);
-            }
-        }
-    }
-
-    let config = codex_config_file();
-    if config.is_file() {
-        matched.push(config);
-    }
-
-    matched
-}
-
-fn codex_plugin_is_configured() -> bool {
-    codex_plugin_enabled()
-        && codex_plugin_hooks_enabled()
-        && codex_plugin_files_current()
-        && codex_plugin_hooks_trusted()
-}
-
-/// True only when every hook our plugin registers has a matching
-/// `trusted_hash` under `[hooks.state.*]`. Without these, Codex silently
-/// drops the handlers at discovery time.
-fn codex_plugin_hooks_trusted() -> bool {
-    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
-        return false;
-    };
-    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-    let Some(state) = doc.get("hooks").and_then(|hooks| hooks.get("state")) else {
-        return false;
-    };
-    crate::codex_trust::expected_trust_entries()
-        .iter()
-        .all(|entry| {
-            state
-                .get(&entry.key)
-                .and_then(|item| item.get("trusted_hash"))
-                .and_then(|v| v.as_str())
-                == Some(entry.trusted_hash.as_str())
-        })
-}
-
-fn codex_plugin_enabled() -> bool {
-    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
-        return false;
-    };
-    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-    doc.get("plugins")
-        .and_then(|p| p.get("sidekick@personal"))
-        .and_then(|p| p.get("enabled"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
-fn codex_plugin_hooks_enabled() -> bool {
-    let Ok(config) = std::fs::read_to_string(codex_config_file()) else {
-        return false;
-    };
-    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-    doc.get("features")
-        .and_then(|p| p.get("plugin_hooks"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
-fn codex_plugin_files_current() -> bool {
-    let Some(home) = dirs::home_dir() else {
-        return false;
-    };
-    let source_root = home.join("plugins").join("sidekick");
-    let cache_root = codex_home()
-        .join("plugins")
-        .join("cache")
-        .join("personal")
-        .join("sidekick")
-        .join(env!("CARGO_PKG_VERSION"));
-
-    codex_plugin_root_current(&source_root) && codex_plugin_root_current(&cache_root)
-}
-
-fn codex_plugin_root_current(root: &Path) -> bool {
-    std::fs::read_to_string(root.join(".codex-plugin").join("plugin.json"))
-        .ok()
-        .as_deref()
-        == Some(crate::fix::CODEX_PLUGIN_SRC)
-        && std::fs::read_to_string(root.join("hooks.json"))
-            .ok()
-            .as_deref()
-            == Some(crate::fix::CODEX_HOOKS_SRC)
-}
-
-fn check_codex_plugin() -> Check {
-    let direct_hooks = codex_hook_files();
-    if !direct_hooks.is_empty() {
-        return Check {
-            label: "hook registered".into(),
-            detail: Some(
-                direct_hooks
-                    .iter()
-                    .map(|p| display_path(p))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            status: Status::Pass,
-        };
-    }
-
-    if codex_plugin_is_configured() {
-        return Check {
-            label: "plugin installed".into(),
-            detail: Some(
-                codex_plugin_detail_files()
-                    .iter()
-                    .map(|p| display_path(p))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            status: Status::Pass,
-        };
-    }
-
-    let mut remedy = Vec::new();
-    if !codex_plugin_hooks_enabled() {
-        remedy.push("Enable Codex plugin hooks in ~/.codex/config.toml".into());
-    }
-    if !codex_plugin_enabled() {
-        remedy.push("Enable the Sidekick Codex plugin as `sidekick@personal`".into());
-    }
-    if !codex_plugin_files_current() {
-        remedy.push("Install the Sidekick Codex plugin into your personal marketplace".into());
-    }
-
-    Check {
-        label: "plugin not installed".into(),
-        detail: None,
-        status: Status::Fail { remedy },
-    }
-}
-
-/// Plugin files that already wire up sidekick for opencode.
-pub(crate) fn opencode_plugin_files() -> Vec<PathBuf> {
-    let mut matched: Vec<PathBuf> = Vec::new();
-
-    // opencode globs `{plugin,plugins}/*.{ts,js}` under its global config dir
-    // (~/.config/opencode) and per-project (.opencode).
-    let mut plugin_dirs: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        plugin_dirs.push(home.join(".config").join("opencode"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        plugin_dirs.push(cwd.join(".opencode"));
-    }
-    for base in &plugin_dirs {
-        for dir in ["plugin", "plugins"] {
-            for ext in ["ts", "js"] {
-                let candidate = base.join(dir).join(format!("sidekick.{ext}"));
-                if candidate.is_file() {
-                    matched.push(candidate);
-                }
-            }
-        }
-    }
-
-    matched.sort();
-    matched.dedup();
-    matched
-}
-
-fn check_opencode_plugin() -> Check {
-    let matched = opencode_plugin_files();
-
-    if matched.is_empty() {
-        return Check {
-            label: "plugin not installed".into(),
-            detail: None,
-            status: Status::Fail {
-                remedy: vec![
-                    "Drop plugins/opencode/sidekick.ts into ~/.config/opencode/plugin/".into(),
-                ],
-            },
-        };
-    }
-
-    let detail = matched
-        .iter()
-        .map(|p| display_path(p))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Presence isn't enough — a stale or hand-edited plugin is missing fixes.
-    // The binary embeds the canonical plugin, so compare byte-for-byte.
-    let all_current = matched.iter().all(|p| {
-        std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::OPENCODE_PLUGIN_SRC)
-    });
-
-    if all_current {
-        Check {
-            label: "plugin installed".into(),
-            detail: Some(detail),
-            status: Status::Pass,
-        }
-    } else {
-        Check {
-            label: "plugin out of sync".into(),
-            detail: Some(detail),
-            status: Status::Fail {
-                remedy: vec!["The installed plugin differs from this sidekick build.".into()],
-            },
-        }
-    }
-}
-
-/// Extension files that already wire up sidekick for the pi coding agent.
-pub(crate) fn pi_extension_files() -> Vec<PathBuf> {
-    let mut matched: Vec<PathBuf> = Vec::new();
-
-    // pi loads `extensions/*.{ts,js}` from its global agent config dir
-    // (~/.pi/agent) and per-project (.pi).
-    let mut extension_dirs: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        extension_dirs.push(home.join(".pi").join("agent").join("extensions"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        extension_dirs.push(cwd.join(".pi").join("extensions"));
-    }
-    for dir in &extension_dirs {
-        for ext in ["ts", "js"] {
-            let candidate = dir.join(format!("sidekick.{ext}"));
-            if candidate.is_file() {
-                matched.push(candidate);
-            }
-        }
-    }
-
-    matched.sort();
-    matched.dedup();
-    matched
-}
-
-fn check_pi_extension() -> Check {
-    let matched = pi_extension_files();
-
-    if matched.is_empty() {
-        return Check {
-            label: "extension not installed".into(),
-            detail: None,
-            status: Status::Fail {
-                remedy: vec!["Drop plugins/pi/sidekick.ts into ~/.pi/agent/extensions/".into()],
-            },
-        };
-    }
-
-    let detail = matched
-        .iter()
-        .map(|p| display_path(p))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    // Presence isn't enough — a stale or hand-edited extension is missing
-    // fixes. The binary embeds the canonical extension, so compare byte-for-byte.
-    let all_current = matched
-        .iter()
-        .all(|p| std::fs::read_to_string(p).ok().as_deref() == Some(crate::fix::PI_EXTENSION_SRC));
-
-    if all_current {
-        Check {
-            label: "extension installed".into(),
-            detail: Some(detail),
-            status: Status::Pass,
-        }
-    } else {
-        Check {
-            label: "extension out of sync".into(),
-            detail: Some(detail),
-            status: Status::Fail {
-                remedy: vec!["The installed extension differs from this sidekick build.".into()],
-            },
-        }
-    }
-}
-
-/// Whether an executable of this name is on `$PATH`.
-fn binary_on_path(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
-}
-
-/// Whether this machine looks like a Claude Code user.
-pub(crate) fn uses_claude_code() -> bool {
-    binary_on_path("claude")
-        || dirs::home_dir()
-            .map(|h| h.join(".claude").is_dir())
-            .unwrap_or(false)
-}
-
-/// Whether this machine looks like a Codex user.
-pub(crate) fn uses_codex() -> bool {
-    binary_on_path("codex") || codex_home().is_dir()
 }
 
 #[derive(PartialEq)]
@@ -1020,14 +541,8 @@ pub(crate) enum AliasStatus {
     Unknown,
 }
 
-/// Echoed immediately before `type nvim` so we can discard whatever the
-/// interactive rc files (.zshrc banners, MOTDs) wrote to stdout on startup —
-/// otherwise that noise gets mistaken for the probe's result.
 const NVIM_PROBE_SENTINEL: &str = "__sidekick_probe__";
 
-/// Runs `type nvim` in `shell` as an interactive shell (`-i`, so rc-file
-/// aliases resolve) and returns just that command's output, with any startup
-/// banner printed before [`NVIM_PROBE_SENTINEL`] stripped off.
 fn probe_nvim_type(shell: &str) -> std::io::Result<String> {
     let out = Command::new(shell)
         .args([
@@ -1041,9 +556,6 @@ fn probe_nvim_type(shell: &str) -> std::io::Result<String> {
     Ok(isolated.to_string())
 }
 
-/// Runtime check of whether `nvim` resolves to `sidekick neovim` in the login
-/// shell — the same probe `check_shell_alias` renders, shared so `--fix` never
-/// offers an alias that's already live.
 pub(crate) fn nvim_alias_status() -> AliasStatus {
     let Ok(shell) = std::env::var("SHELL") else {
         return AliasStatus::Unknown;
@@ -1052,89 +564,6 @@ pub(crate) fn nvim_alias_status() -> AliasStatus {
         Ok(out) if out.contains("sidekick neovim") => AliasStatus::Active,
         Ok(_) => AliasStatus::Missing,
         Err(_) => AliasStatus::Unknown,
-    }
-}
-
-/// Whether this machine looks like an opencode user.
-pub(crate) fn uses_opencode() -> bool {
-    binary_on_path("opencode")
-        || dirs::home_dir()
-            .map(|h| h.join(".config").join("opencode").is_dir())
-            .unwrap_or(false)
-}
-
-/// Whether this machine looks like a pi coding agent user. The `~/.pi/agent`
-/// directory is pi-specific; `pi` alone is a short name that could collide.
-pub(crate) fn uses_pi() -> bool {
-    binary_on_path("pi")
-        || dirs::home_dir()
-            .map(|h| h.join(".pi").join("agent").is_dir())
-            .unwrap_or(false)
-}
-
-/// Whether this machine looks like a Crush user.
-pub(crate) fn uses_crush() -> bool {
-    binary_on_path("crush")
-        || dirs::home_dir()
-            .map(|h| h.join(".config").join("crush").is_dir())
-            .unwrap_or(false)
-}
-
-/// Candidate Crush config files in precedence order: project local first,
-/// then global (`$CRUSH_GLOBAL_CONFIG` overrides the default global path).
-pub(crate) fn crush_config_candidates() -> Vec<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join(".crush.json"));
-        candidates.push(cwd.join("crush.json"));
-    }
-
-    if let Some(path) = std::env::var_os("CRUSH_GLOBAL_CONFIG") {
-        candidates.push(PathBuf::from(path));
-    } else if let Some(home) = dirs::home_dir() {
-        candidates.push(home.join(".config").join("crush").join("crush.json"));
-    }
-
-    candidates
-}
-
-/// Config files that already wire up `sidekick hook` for Crush.
-pub(crate) fn crush_hook_files() -> Vec<PathBuf> {
-    let mut matched: Vec<PathBuf> = crush_config_candidates()
-        .into_iter()
-        .filter(|p| file_mentions_sidekick_hook(p))
-        .collect();
-    matched.sort();
-    matched.dedup();
-    matched
-}
-
-fn check_crush_hook() -> Check {
-    let matched = crush_hook_files();
-
-    if !matched.is_empty() {
-        let detail = matched
-            .iter()
-            .map(|p| display_path(p))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Check {
-            label: "hook registered".into(),
-            detail: Some(detail),
-            status: Status::Pass,
-        };
-    }
-
-    Check {
-        label: "hook not registered".into(),
-        detail: None,
-        status: Status::Fail {
-            remedy: vec![
-                "Run `sidekick doctor --fix` to merge the hook into ~/.config/crush/crush.json"
-                    .into(),
-            ],
-        },
     }
 }
 
@@ -1153,8 +582,6 @@ fn check_shell_alias() -> Check {
         .unwrap_or("shell")
         .to_string();
 
-    // `probe_nvim_type` sources the user's rc files (so aliases resolve) and
-    // strips any startup banner the rc files print, leaving just `type nvim`.
     match probe_nvim_type(&shell) {
         Ok(stdout) => {
             if stdout.contains("sidekick neovim") {
@@ -1267,31 +694,6 @@ fn relative_time(at: DateTime<Utc>) -> String {
         format!("{}h ago", secs / 3600)
     } else {
         format!("{}d ago", secs / 86_400)
-    }
-}
-
-fn file_mentions_sidekick_hook(path: &Path) -> bool {
-    std::fs::read_to_string(path)
-        .map(|c| c.contains("sidekick hook"))
-        .unwrap_or(false)
-}
-
-fn walk_for_json_mentioning_hook(dir: &Path, matched: &mut Vec<PathBuf>, depth: usize) {
-    if depth == 0 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_for_json_mentioning_hook(&path, matched, depth - 1);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("json")
-            && file_mentions_sidekick_hook(&path)
-        {
-            matched.push(path);
-        }
     }
 }
 

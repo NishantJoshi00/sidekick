@@ -4,14 +4,15 @@ use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-mod action;
 mod analytics;
 mod codex_trust;
 mod constants;
 mod demo;
 mod doctor;
+mod editor;
 mod fix;
 mod handler;
+mod harness;
 mod hook;
 mod init;
 mod utils;

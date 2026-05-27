@@ -1,7 +1,7 @@
 //! Buffer operations for Neovim instances.
 
 use super::lua;
-use crate::action::{BufferStatus, EditorContext};
+use crate::editor::{BufferStatus, EditorContext};
 use anyhow::{Context, Result};
 use neovim_lib::{Neovim, NeovimApi, neovim_api::Buffer};
 use std::path::PathBuf;

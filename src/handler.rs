@@ -33,11 +33,11 @@ use std::time::Instant;
 
 use chrono::Utc;
 
-use crate::action::{Action, neovim::NeovimAction};
 use crate::analytics::{
     self,
     event::{BufferRefresh, Decision, DecisionReason, Event, HookDecision, ToolKind},
 };
+use crate::editor::{Editor, neovim::NeovimEditor};
 use crate::hook::{
     self, ClaudeShape, CrushShape, FileToolInput, Hook, HookOutput, KnownTool, PermissionDecision,
     Tool,
@@ -58,7 +58,7 @@ pub fn handle_hook() -> anyhow::Result<()> {
     let nvim_action = if socket_paths.is_empty() {
         None
     } else {
-        Some(NeovimAction::new(socket_paths))
+        Some(NeovimEditor::new(socket_paths))
     };
 
     // Handle based on hook type
@@ -96,7 +96,7 @@ fn handle_pre_tool_use(
     session_id: &str,
     cwd: &str,
     tool: &Tool,
-    nvim_action: Option<&NeovimAction>,
+    nvim_action: Option<&NeovimEditor>,
     instances_probed: usize,
 ) -> HookOutput {
     let mutations = tool_to_mutations(tool);
@@ -137,7 +137,7 @@ fn handle_post_tool_use(
     session_id: &str,
     cwd: &str,
     tool: &Tool,
-    nvim_action: Option<&NeovimAction>,
+    nvim_action: Option<&NeovimEditor>,
 ) -> HookOutput {
     let mutations = tool_to_mutations(tool);
     if mutations.is_empty() {
@@ -164,7 +164,7 @@ fn handle_post_tool_use(
 }
 
 /// Handle UserPromptSubmit hook - inject visual selections as context
-fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
+fn handle_user_prompt_submit(nvim_action: Option<&NeovimEditor>) -> HookOutput {
     let Some(action) = nvim_action else {
         return HookOutput::new();
     };
@@ -194,7 +194,7 @@ fn handle_user_prompt_submit(nvim_action: Option<&NeovimAction>) -> HookOutput {
 /// Check if buffer has unsaved modifications and block if necessary.
 /// Returns the hook response alongside a `DecisionReason` for analytics.
 fn check_buffer_modifications(
-    nvim_action: Option<&NeovimAction>,
+    nvim_action: Option<&NeovimEditor>,
     file_path: &str,
 ) -> (HookOutput, DecisionReason) {
     let Some(action) = nvim_action else {
@@ -221,7 +221,7 @@ fn check_buffer_modifications(
 }
 
 /// Refresh buffer after file modification
-fn refresh_buffer(nvim_action: Option<&NeovimAction>, file_path: &str) -> HookOutput {
+fn refresh_buffer(nvim_action: Option<&NeovimEditor>, file_path: &str) -> HookOutput {
     let Some(action) = nvim_action else {
         return HookOutput::new();
     };

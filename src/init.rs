@@ -15,11 +15,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use crate::doctor::{
-    self, AliasStatus, CLAUDE_ACCENT, CODEX_ACCENT, CRUSH_ACCENT, OPENCODE_ACCENT, PI_ACCENT,
-    SPINNER_FRAMES, Theme,
-};
+use crate::doctor::{self, AliasStatus, SPINNER_FRAMES, Theme};
 use crate::fix::{self, Fix};
+use crate::harness;
 
 /// Spinner frames shown per step before it resolves.
 const SPIN_FRAMES: u32 = 3;
@@ -68,69 +66,37 @@ fn make_step(
     }
 }
 
-/// One step per detected harness, plus the `nvim` alias. An absent harness
-/// gets no row; past the `uses_*` gate, a `None` fix means already configured.
+/// One step per detected harness, plus the `nvim` alias. Iterates the
+/// harness registry — adding a new harness is "implement Harness, add to
+/// registry::all", not a touch here.
 fn build_steps() -> Vec<Step> {
     let mut steps = Vec::new();
 
-    if doctor::uses_claude_code() {
-        steps.push(make_step(
-            "Claude Code hook",
-            "Lets Claude Code check your unsaved Neovim buffers before it edits.",
-            Some(CLAUDE_ACCENT),
-            fix::claude_fix(),
-        ));
-    }
-    if doctor::uses_codex() {
-        let mut fixes = fix::codex_fixes();
+    for h in harness::registry::all() {
+        if !h.is_installed() {
+            continue;
+        }
+        let label = h.name();
+        let accent = Some(h.accent());
+        let description = h.init_description();
+        let mut fixes = h.fix();
+
         if fixes.is_empty() {
-            steps.push(make_step(
-                "Codex plugin",
-                "Lets Codex respect your unsaved Neovim buffers before it writes.",
-                Some(CODEX_ACCENT),
-                None,
-            ));
+            steps.push(make_step(label, description, accent, None));
         } else {
             let first = fixes.remove(0);
-            steps.push(make_step(
-                "Codex plugin",
-                "Lets Codex respect your unsaved Neovim buffers before it writes.",
-                Some(CODEX_ACCENT),
-                Some(first),
-            ));
+            steps.push(make_step(label, description, accent, Some(first)));
+            // Multi-fix harnesses (Codex) need one continuation step per
+            // remaining file. Generic copy works for any harness.
             for fix in fixes {
                 steps.push(make_step(
-                    "Codex plugin",
-                    "Completes the Sidekick Codex plugin installation.",
-                    Some(CODEX_ACCENT),
+                    label,
+                    "Completes installation.",
+                    accent,
                     Some(fix),
                 ));
             }
         }
-    }
-    if doctor::uses_opencode() {
-        steps.push(make_step(
-            "opencode plugin",
-            "Lets opencode respect your unsaved Neovim buffers before it writes.",
-            Some(OPENCODE_ACCENT),
-            fix::opencode_fix(),
-        ));
-    }
-    if doctor::uses_pi() {
-        steps.push(make_step(
-            "pi extension",
-            "Lets the pi agent respect your unsaved Neovim buffers before it writes.",
-            Some(PI_ACCENT),
-            fix::pi_fix(),
-        ));
-    }
-    if doctor::uses_crush() {
-        steps.push(make_step(
-            "Crush hook",
-            "Lets Crush respect your unsaved Neovim buffers before it edits.",
-            Some(CRUSH_ACCENT),
-            fix::crush_fix(),
-        ));
     }
 
     const ALIAS_DESC: &str = "Routes `nvim` through sidekick so every session is guarded.";
