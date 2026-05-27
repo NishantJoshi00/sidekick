@@ -23,7 +23,7 @@ This isn't a limitation — it's how productive human-AI collaboration should wo
 
 ## Roadmap
 
-Sidekick currently supports Neovim + Claude Code + Codex + opencode + pi + Crush + Amp. The vision is broader.
+Sidekick currently supports Neovim + Claude Code + Codex + opencode + pi + Crush + Amp + Antigravity. The vision is broader.
 
 ### Phase 1: More AI Tools
 

@@ -41,10 +41,21 @@ use crate::analytics::{
 };
 use crate::editor::{Editor, neovim::NeovimEditor};
 use crate::hook::{
-    self, ClaudeShape, CrushShape, FileToolInput, Hook, HookOutput, KnownTool, PermissionDecision,
-    Tool,
+    self, AntigravityShape, AntigravityToolHook, ClaudeShape, CrushShape, FileToolInput, Hook,
+    HookOutput, KnownTool, PermissionDecision, Tool,
 };
 use crate::utils;
+
+/// Which output envelope the host expects on stdout. Claude-shape hosts
+/// (Claude Code, Codex, opencode, pi, Crush, Amp) read
+/// `hookSpecificOutput.permissionDecision`; Antigravity reads a top-level
+/// `decision` field instead. Emitting the wrong shape means the host
+/// silently treats every gating call as allow.
+#[derive(Clone, Copy)]
+enum WireFormat {
+    Claude,
+    Antigravity,
+}
 
 pub fn handle_hook() -> anyhow::Result<()> {
     // Read hook input from stdin
@@ -53,6 +64,10 @@ pub fn handle_hook() -> anyhow::Result<()> {
 
     // Parse the hook
     let hook = hook::parse_hook(&input)?;
+    let wire = match &hook {
+        Hook::Antigravity(_) => WireFormat::Antigravity,
+        _ => WireFormat::Claude,
+    };
 
     // Resolve nvim instances. Start with the cwd-based search every
     // harness has relied on; fall back to walking up from the file path
@@ -76,6 +91,7 @@ pub fn handle_hook() -> anyhow::Result<()> {
             &h.tool,
             nvim_action.as_ref(),
             instances_probed,
+            wire,
         ),
         Hook::Claude(ClaudeShape::PostToolUse(h)) => {
             handle_post_tool_use(&h.session_id, &h.cwd, &h.tool, nvim_action.as_ref())
@@ -89,7 +105,23 @@ pub fn handle_hook() -> anyhow::Result<()> {
             &h.tool,
             nvim_action.as_ref(),
             instances_probed,
+            wire,
         ),
+        Hook::Antigravity(AntigravityShape::PreToolUse(h)) => {
+            let cwd = h.workspace_paths.first().map(String::as_str).unwrap_or("");
+            let tool = antigravity_to_tool(&h);
+            handle_pre_tool_use(
+                &h.conversation_id,
+                cwd,
+                &tool,
+                nvim_action.as_ref(),
+                instances_probed,
+                wire,
+            )
+        }
+        Hook::Antigravity(AntigravityShape::PostToolUse(_)) => {
+            handle_antigravity_post_tool_use(nvim_action.as_ref())
+        }
     };
 
     // Return hook output
@@ -105,15 +137,16 @@ fn handle_pre_tool_use(
     tool: &Tool,
     nvim_action: Option<&NeovimEditor>,
     instances_probed: usize,
+    wire: WireFormat,
 ) -> HookOutput {
     let mutations = tool_to_mutations(tool);
     if mutations.is_empty() {
-        return HookOutput::new();
+        return build_allow(wire);
     };
 
     for (tool_kind, file_path) in mutations {
         let started = Instant::now();
-        let (output, reason) = check_buffer_modifications(nvim_action, &file_path);
+        let (output, reason) = check_buffer_modifications(nvim_action, &file_path, wire);
         let decision = match reason {
             DecisionReason::BufferDirtyAndCurrent => Decision::Deny,
             _ => Decision::Allow,
@@ -136,7 +169,7 @@ fn handle_pre_tool_use(
         }
     }
 
-    HookOutput::new()
+    build_allow(wire)
 }
 
 /// Handle PostToolUse hook - refresh buffers after modifications
@@ -167,6 +200,20 @@ fn handle_post_tool_use(
         }
     }
 
+    HookOutput::new()
+}
+
+/// Handle Antigravity's PostToolUse — no toolCall on the wire, just
+/// `stepIdx` and optional `error`. Sidekick doesn't know which file the
+/// host just wrote, so it broadcasts `:checktime` to every connected
+/// Neovim. Each instance reloads buffers whose disk file changed; dirty
+/// buffers stay protected by Vim's W12 prompt.
+fn handle_antigravity_post_tool_use(nvim_action: Option<&NeovimEditor>) -> HookOutput {
+    if let Some(action) = nvim_action
+        && let Err(e) = action.check_all_buffers()
+    {
+        eprintln!("Warning: {}", e);
+    }
     HookOutput::new()
 }
 
@@ -203,13 +250,14 @@ fn handle_user_prompt_submit(nvim_action: Option<&NeovimEditor>) -> HookOutput {
 fn check_buffer_modifications(
     nvim_action: Option<&NeovimEditor>,
     file_path: &str,
+    wire: WireFormat,
 ) -> (HookOutput, DecisionReason) {
     let Some(action) = nvim_action else {
-        return (HookOutput::new(), DecisionReason::NoNvimRunning);
+        return (build_allow(wire), DecisionReason::NoNvimRunning);
     };
 
     let Ok(status) = action.buffer_status(file_path) else {
-        return (HookOutput::new(), DecisionReason::StatusCheckFailed);
+        return (build_allow(wire), DecisionReason::StatusCheckFailed);
     };
 
     if status.has_unsaved_changes && status.is_current {
@@ -217,13 +265,35 @@ fn check_buffer_modifications(
             eprintln!("Warning: {}", e);
         }
 
-        let output = HookOutput::new().with_permission_decision(
-            PermissionDecision::Deny,
-            Some("The file is being edited by the user, try again later".to_string()),
-        );
-        (output, DecisionReason::BufferDirtyAndCurrent)
+        let reason = "The file is being edited by the user, try again later".to_string();
+        (
+            build_deny(wire, reason),
+            DecisionReason::BufferDirtyAndCurrent,
+        )
     } else {
-        (HookOutput::new(), DecisionReason::BufferAvailable)
+        (build_allow(wire), DecisionReason::BufferAvailable)
+    }
+}
+
+/// Construct an allow-shaped PreToolUse output. Claude-shape hosts treat
+/// an empty `{}` as allow; Antigravity requires an explicit top-level
+/// `decision: "allow"`.
+fn build_allow(wire: WireFormat) -> HookOutput {
+    match wire {
+        WireFormat::Claude => HookOutput::new(),
+        WireFormat::Antigravity => HookOutput::new().with_top_level_decision("allow", None),
+    }
+}
+
+/// Construct a deny-shaped PreToolUse output for the host's wire format.
+/// Claude-shape hosts read `hookSpecificOutput.permissionDecision`;
+/// Antigravity reads the top-level `decision` field.
+fn build_deny(wire: WireFormat, reason: String) -> HookOutput {
+    match wire {
+        WireFormat::Claude => {
+            HookOutput::new().with_permission_decision(PermissionDecision::Deny, Some(reason))
+        }
+        WireFormat::Antigravity => HookOutput::new().with_top_level_decision("deny", Some(reason)),
     }
 }
 
@@ -251,11 +321,17 @@ fn refresh_buffer(nvim_action: Option<&NeovimEditor>, file_path: &str) -> HookOu
 #[allow(dead_code)] // called from tests/integration.rs (separate crate)
 pub fn extract_mutations(input: &str) -> anyhow::Result<Vec<(String, String)>> {
     let hook_value = hook::parse_hook(input)?;
-    let tool = match &hook_value {
+    let owned_tool: Tool;
+    let tool: &Tool = match &hook_value {
         Hook::Claude(ClaudeShape::PreToolUse(h)) => &h.tool,
         Hook::Claude(ClaudeShape::PostToolUse(h)) => &h.tool,
         Hook::Crush(CrushShape::PreToolUse(h)) => &h.tool,
-        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => return Ok(Vec::new()),
+        Hook::Antigravity(AntigravityShape::PreToolUse(h)) => {
+            owned_tool = antigravity_to_tool(h);
+            &owned_tool
+        }
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_))
+        | Hook::Antigravity(AntigravityShape::PostToolUse(_)) => return Ok(Vec::new()),
     };
     Ok(tool_to_mutations(tool)
         .into_iter()
@@ -275,6 +351,11 @@ pub fn classify_event(input: &str) -> anyhow::Result<&'static str> {
         Hook::Claude(ClaudeShape::PostToolUse(_)) => "PostToolUse",
         Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => "UserPromptSubmit",
         Hook::Crush(CrushShape::PreToolUse(_)) => "PreToolUse",
+        // Antigravity has no event-name tag on the wire — the structural
+        // discriminator on AntigravityShape (presence of toolCall) maps
+        // to Pre vs Post.
+        Hook::Antigravity(AntigravityShape::PreToolUse(_)) => "PreToolUse",
+        Hook::Antigravity(AntigravityShape::PostToolUse(_)) => "PostToolUse",
     })
 }
 
@@ -292,11 +373,17 @@ fn resolve_socket_paths(hook: &Hook) -> Vec<PathBuf> {
     if !cwd_based.is_empty() {
         return cwd_based;
     }
-    let tool = match hook {
+    let owned_tool: Tool;
+    let tool: Option<&Tool> = match hook {
         Hook::Claude(ClaudeShape::PreToolUse(h)) => Some(&h.tool),
         Hook::Claude(ClaudeShape::PostToolUse(h)) => Some(&h.tool),
         Hook::Crush(CrushShape::PreToolUse(h)) => Some(&h.tool),
-        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => None,
+        Hook::Antigravity(AntigravityShape::PreToolUse(h)) => {
+            owned_tool = antigravity_to_tool(h);
+            Some(&owned_tool)
+        }
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_))
+        | Hook::Antigravity(AntigravityShape::PostToolUse(_)) => None,
     };
     let Some(tool) = tool else {
         return Vec::new();
@@ -308,6 +395,17 @@ fn resolve_socket_paths(hook: &Hook) -> Vec<PathBuf> {
         }
     }
     Vec::new()
+}
+
+/// Lower an Antigravity PreToolUse envelope's nested `toolCall` into the
+/// generic `Tool::Other` shape so the existing mutation-extraction
+/// pipeline handles it the same way as Crush's lowercase tools and
+/// Codex's `apply_patch`.
+fn antigravity_to_tool(h: &AntigravityToolHook) -> Tool {
+    Tool::Other {
+        tool_name: h.tool_call.name.clone(),
+        tool_input: h.tool_call.args.clone(),
+    }
 }
 
 fn tool_to_mutations(tool: &Tool) -> Vec<(ToolKind, String)> {
@@ -343,9 +441,9 @@ fn other_tool_mutations(name: &str, input: &serde_json::Value) -> Vec<(ToolKind,
         // case a raw envelope reaches the handler; the plugin in
         // `plugins/amp/sidekick.ts` already maps them to Edit/Write before
         // shelling out, so this is defense in depth.
-        "edit" | "edit_file" => ToolKind::Edit,
-        "write" | "create_file" => ToolKind::Write,
-        "multiedit" | "multi_edit" => ToolKind::MultiEdit,
+        "edit" | "edit_file" | "replace_file_content" => ToolKind::Edit,
+        "write" | "create_file" | "write_to_file" => ToolKind::Write,
+        "multiedit" | "multi_edit" | "multi_replace_file_content" => ToolKind::MultiEdit,
         _ => return Vec::new(),
     };
 
@@ -358,7 +456,9 @@ fn other_tool_mutations(name: &str, input: &serde_json::Value) -> Vec<(ToolKind,
 
 fn pick_file_path(input: &serde_json::Value) -> Option<&str> {
     input.as_object().and_then(|obj| {
-        ["file_path", "filePath", "path"]
+        // `TargetFile` is Antigravity's PascalCase key on
+        // write_to_file / replace_file_content / multi_replace_file_content.
+        ["file_path", "filePath", "path", "TargetFile"]
             .into_iter()
             .find_map(|key| obj.get(key).and_then(|v| v.as_str()))
     })
@@ -428,9 +528,53 @@ fn dedupe_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::tool_to_mutations;
+    use super::{WireFormat, build_allow, build_deny, tool_to_mutations};
     use crate::analytics::event::ToolKind;
     use crate::hook::Tool;
+
+    #[test]
+    fn antigravity_deny_output_places_decision_at_top_level() {
+        // Regression: the original Antigravity slice emitted Claude-shape
+        // hookSpecificOutput.permissionDecision; Antigravity reads
+        // top-level `decision` and silently allowed the edit. The fix is
+        // wire-format-aware build_deny; this test pins it.
+        let output = build_deny(WireFormat::Antigravity, "blocked".into());
+        let json = output.to_json().unwrap();
+
+        assert!(json.contains("\"decision\":\"deny\""));
+        assert!(json.contains("\"reason\":\"blocked\""));
+        assert!(!json.contains("\"hookSpecificOutput\""));
+    }
+
+    #[test]
+    fn claude_deny_output_still_uses_nested_permission_decision() {
+        // Claude/Crush/opencode/pi/Amp must keep their existing wire
+        // contract — top-level `decision` is not what they read.
+        let output = build_deny(WireFormat::Claude, "blocked".into());
+        let json = output.to_json().unwrap();
+
+        assert!(json.contains("\"permissionDecision\":\"deny\""));
+        assert!(json.contains("\"hookEventName\":\"PreToolUse\""));
+        assert!(!json.contains("\"decision\":\"deny\","));
+    }
+
+    #[test]
+    fn antigravity_allow_output_explicit_decision() {
+        // Antigravity docs mark `decision` as required, so emit an
+        // explicit allow rather than the Claude-shape empty `{}`.
+        let output = build_allow(WireFormat::Antigravity);
+        let json = output.to_json().unwrap();
+        assert!(json.contains("\"decision\":\"allow\""));
+    }
+
+    #[test]
+    fn claude_allow_output_stays_empty() {
+        // Claude treats empty `{}` as allow; emitting decision/allow on
+        // every PreToolUse here would be a wire change for five existing
+        // harnesses.
+        let output = build_allow(WireFormat::Claude);
+        assert_eq!(output.to_json().unwrap(), "{}");
+    }
 
     #[test]
     fn extracts_codex_apply_patch_paths() {
@@ -530,6 +674,45 @@ mod tests {
         assert_eq!(
             tool_to_mutations(&tool),
             vec![(ToolKind::Write, "src/new.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_antigravity_write_to_file_target_file() {
+        let tool = Tool::Other {
+            tool_name: "write_to_file".into(),
+            tool_input: serde_json::json!({ "TargetFile": "/p/src/new.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Write, "/p/src/new.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_antigravity_replace_file_content_target_file() {
+        let tool = Tool::Other {
+            tool_name: "replace_file_content".into(),
+            tool_input: serde_json::json!({ "TargetFile": "/p/src/lib.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Edit, "/p/src/lib.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_antigravity_multi_replace_file_content_target_file() {
+        let tool = Tool::Other {
+            tool_name: "multi_replace_file_content".into(),
+            tool_input: serde_json::json!({ "TargetFile": "/p/src/lib.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::MultiEdit, "/p/src/lib.rs".into())]
         );
     }
 

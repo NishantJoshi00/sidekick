@@ -58,6 +58,18 @@ impl Editor for NeovimEditor {
         }
     }
 
+    fn check_all_buffers(&self) -> Result<()> {
+        let any_success = connection::for_each_instance(&self.socket_paths, |nvim| {
+            buffer::check_all_buffers(nvim)
+        });
+
+        if any_success {
+            Ok(())
+        } else {
+            anyhow::bail!("couldn't checktime any Neovim instance")
+        }
+    }
+
     fn send_message(&self, message: &str) -> Result<()> {
         let lua_code = lua::send_notification_lua(message);
         let any_success = connection::for_each_instance(&self.socket_paths, |nvim| {

@@ -37,14 +37,17 @@ use anyhow::Context;
 /// `Claude` covers the wire-identical envelopes from Claude Code, Codex,
 /// and the opencode/pi bridges — all carry a `hook_event_name` field.
 /// `Crush` is Crush's distinct envelope, which uses `event` instead and
-/// omits `transcript_path`. Untagged matching uses the presence of the
-/// tag field on the inner internally-tagged enum to discriminate.
+/// omits `transcript_path`. `Antigravity` has no top-level event tag at
+/// all (the event is implicit in the `hooks.json` registration), uses
+/// camelCase fields, and nests the tool call. Untagged matching tries
+/// the more-specific variants (those with a tag field) first.
 #[non_exhaustive]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum Hook {
     Claude(ClaudeShape),
     Crush(CrushShape),
+    Antigravity(AntigravityShape),
 }
 
 /// Claude-shape envelopes — internally tagged on `hook_event_name`.
@@ -96,6 +99,59 @@ pub struct CrushToolHook {
     pub cwd: String,
     #[serde(flatten)]
     pub tool: Tool,
+}
+
+/// Antigravity's hook envelope. The wire has no top-level event-name
+/// field; the discriminator is structural — PreToolUse payloads carry a
+/// `toolCall: { name, args }` object, PostToolUse payloads do not. Field
+/// names are camelCase, tool argument keys are PascalCase.
+#[non_exhaustive]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum AntigravityShape {
+    PreToolUse(AntigravityToolHook),
+    PostToolUse(AntigravityPostHook),
+}
+
+/// Antigravity PreToolUse body — has the nested `toolCall`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityToolHook {
+    pub conversation_id: String,
+    pub workspace_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_directory_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_idx: Option<i64>,
+    pub tool_call: AntigravityToolCall,
+}
+
+/// Antigravity PostToolUse body — no `toolCall`, carries `stepIdx` and an
+/// optional `error` for the completed step.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityPostHook {
+    pub conversation_id: String,
+    pub workspace_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_directory_path: Option<String>,
+    pub step_idx: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Nested tool call inside an Antigravity PreToolUse envelope. `name` is
+/// the snake_case tool name (`write_to_file`, `replace_file_content`,
+/// `multi_replace_file_content`); `args` keys are PascalCase
+/// (`TargetFile`).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AntigravityToolCall {
+    pub name: String,
+    pub args: serde_json::Value,
 }
 
 /// Tool types recognised by name. Adjacent tagging matches the wire
@@ -250,6 +306,22 @@ impl HookOutput {
             permission_decision_reason: reason,
             additional_context: None,
         });
+        self
+    }
+
+    /// Set Antigravity-shape decision: a top-level `decision` string
+    /// (`"allow"` / `"deny"` / `"ask"` / `"force_ask"`) plus an optional
+    /// top-level `reason`. Antigravity reads the gating decision from the
+    /// top of the JSON, not from a nested `hookSpecificOutput`, so emitting
+    /// only the Claude-shape form means the host silently treats the call
+    /// as allowed.
+    pub fn with_top_level_decision(
+        mut self,
+        decision: impl Into<String>,
+        reason: Option<String>,
+    ) -> Self {
+        self.decision = Some(decision.into());
+        self.reason = reason;
         self
     }
 

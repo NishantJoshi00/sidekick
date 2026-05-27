@@ -52,6 +52,11 @@ pub trait Editor {
     /// Refresh the buffer (reload from disk)
     fn refresh_buffer(&self, file_path: &str) -> anyhow::Result<()>;
 
+    /// Refresh every buffer in every instance — `:checktime`. Used when
+    /// the host signaled an edit but the payload didn't include the file
+    /// path (Antigravity's PostToolUse).
+    fn check_all_buffers(&self) -> anyhow::Result<()>;
+
     /// Send a message to the editor
     fn send_message(&self, message: &str) -> anyhow::Result<()>;
 

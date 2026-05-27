@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use crate::fix::Fix;
 
 pub mod amp;
+pub mod antigravity;
 pub mod claude_code;
 pub mod codex;
 pub mod crush;
@@ -37,6 +38,7 @@ pub mod registry {
             Box::new(super::pi::Pi),
             Box::new(super::crush::Crush),
             Box::new(super::amp::Amp),
+            Box::new(super::antigravity::Antigravity),
         ]
     }
 }

@@ -48,6 +48,15 @@ pub fn get_buffer_status(nvim: &mut Neovim, file_path: &str) -> Result<BufferSta
     })
 }
 
+/// `:checktime` across every buffer. Use when the host signals an edit
+/// happened but the payload doesn't include the file path. Dirty buffers
+/// are protected by Vim's own W12 prompt; clean buffers reload silently.
+pub fn check_all_buffers(nvim: &mut Neovim) -> Result<()> {
+    nvim.execute_lua(lua::checktime_all_lua(), vec![])
+        .map(|_| ())
+        .context("couldn't checktime")
+}
+
 /// Refresh buffer from disk while preserving cursor positions
 pub fn refresh_buffer(nvim: &mut Neovim, file_path: &str) -> Result<()> {
     let buffer = find_buffer(nvim, file_path)?;

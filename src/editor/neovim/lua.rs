@@ -37,6 +37,16 @@ pub fn refresh_buffer_lua(buf_number: i64) -> String {
     )
 }
 
+/// Lua code to run `:checktime` across every buffer Neovim has open,
+/// reloading any whose disk file changed since last seen and preserving
+/// the user's locally-modified buffers untouched (W12 prompt instead of
+/// silent overwrite). Used when sidekick knows an edit just happened but
+/// not which file — e.g. Antigravity's PostToolUse payload omits the tool
+/// call.
+pub fn checktime_all_lua() -> &'static str {
+    "vim.cmd('checktime')"
+}
+
 /// Lua code to send a notification message to Neovim
 pub fn send_notification_lua(message: &str) -> String {
     format!(

@@ -37,3 +37,29 @@ fn additional_context_output_targets_user_prompt_submit() {
     assert!(json.contains("\"additionalContext\":\"Selected code here\""));
     assert!(json.contains("\"hookEventName\":\"UserPromptSubmit\""));
 }
+
+#[test]
+fn top_level_decision_deny_places_decision_and_reason_at_root() {
+    // Antigravity reads gating from a top-level `decision` field.
+    // Emitting only the Claude-shape `hookSpecificOutput.permissionDecision`
+    // means the host silently allows the call (the original bug).
+    let output = HookOutput::new()
+        .with_top_level_decision("deny", Some("File has unsaved changes".to_string()));
+    let json = output.to_json().unwrap();
+
+    assert!(json.contains("\"decision\":\"deny\""));
+    assert!(json.contains("\"reason\":\"File has unsaved changes\""));
+    // Must NOT also emit the nested form — that would leave both
+    // interpretations on the wire and is a smell.
+    assert!(!json.contains("\"permissionDecision\""));
+    assert!(!json.contains("\"hookSpecificOutput\""));
+}
+
+#[test]
+fn top_level_decision_allow_omits_reason_field() {
+    let output = HookOutput::new().with_top_level_decision("allow", None);
+    let json = output.to_json().unwrap();
+
+    assert!(json.contains("\"decision\":\"allow\""));
+    assert!(!json.contains("\"reason\""));
+}

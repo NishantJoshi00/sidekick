@@ -421,6 +421,187 @@ fn amp_unknown_tool_does_not_engage() {
 }
 
 // ---------------------------------------------------------------------------
+// Antigravity — no top-level event tag, camelCase fields, nested toolCall,
+// PascalCase argument keys (`TargetFile`). sidekick only registers for
+// PreToolUse, so every incoming envelope is one. PostToolUse omits the
+// tool name/args entirely, so buffer refresh isn't possible — those
+// envelopes never reach the handler in production.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn antigravity_pre_tool_use_write_to_file_extracts_target_file() {
+    let json = r#"{
+        "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
+        "workspacePaths": ["/workspace/project"],
+        "transcriptPath": "/workspace/project/.gemini/jetski/transcript.jsonl",
+        "artifactDirectoryPath": "/workspace/project/.gemini/jetski/artifacts",
+        "stepIdx": 19,
+        "toolCall": {
+            "name": "write_to_file",
+            "args": {
+                "TargetFile": "/workspace/project/src/new.rs",
+                "Overwrite": false,
+                "CodeContent": "fn main() {}",
+                "Description": "create entry point"
+            }
+        }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![(
+            "write".to_string(),
+            "/workspace/project/src/new.rs".to_string()
+        )]
+    );
+}
+
+#[test]
+fn antigravity_pre_tool_use_replace_file_content_extracts_target_file() {
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 3,
+        "toolCall": {
+            "name": "replace_file_content",
+            "args": {
+                "TargetFile": "/p/src/lib.rs",
+                "Instruction": "swap a for b",
+                "TargetContent": "a",
+                "ReplacementContent": "b"
+            }
+        }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("edit".to_string(), "/p/src/lib.rs".to_string())]
+    );
+}
+
+#[test]
+fn antigravity_pre_tool_use_multi_replace_file_content_extracts_target_file() {
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 5,
+        "toolCall": {
+            "name": "multi_replace_file_content",
+            "args": {
+                "TargetFile": "/p/src/lib.rs",
+                "ReplacementChunks": []
+            }
+        }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("multiedit".to_string(), "/p/src/lib.rs".to_string())]
+    );
+}
+
+#[test]
+fn antigravity_pre_tool_use_view_file_does_not_engage() {
+    // view_file is a read tool; sidekick must not engage on reads.
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 1,
+        "toolCall": {
+            "name": "view_file",
+            "args": { "AbsolutePath": "/p/src/lib.rs" }
+        }
+    }"#;
+
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn antigravity_pre_tool_use_run_command_does_not_engage() {
+    // Bash analog — engages no buffer-modification gate.
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 2,
+        "toolCall": {
+            "name": "run_command",
+            "args": { "CommandLine": "ls -la", "Cwd": "/p" }
+        }
+    }"#;
+
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn antigravity_unknown_tool_does_not_engage() {
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 4,
+        "toolCall": {
+            "name": "grep_search",
+            "args": { "SearchPath": "/p", "Query": "TODO" }
+        }
+    }"#;
+
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn antigravity_post_tool_use_routes_as_post_event() {
+    // PostToolUse omits `toolCall` entirely — the structural discriminator
+    // for Antigravity's two events. extract_mutations returns empty (no
+    // toolCall = no per-file path), and classify_event reports Post.
+    let json = r#"{
+        "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
+        "workspacePaths": ["/workspace/project"],
+        "transcriptPath": "/workspace/project/.gemini/jetski/transcript.jsonl",
+        "artifactDirectoryPath": "/workspace/project/.gemini/jetski/artifacts",
+        "stepIdx": 5,
+        "error": ""
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PostToolUse");
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn antigravity_post_tool_use_with_error_parses() {
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "stepIdx": 5,
+        "error": "exit status 1"
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PostToolUse");
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn antigravity_optional_fields_parse() {
+    // Minimum required: conversationId, workspacePaths, toolCall.
+    // transcriptPath, artifactDirectoryPath, stepIdx are optional.
+    let json = r#"{
+        "conversationId": "c",
+        "workspacePaths": ["/p"],
+        "toolCall": {
+            "name": "write_to_file",
+            "args": { "TargetFile": "/p/a.rs" }
+        }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("write".to_string(), "/p/a.rs".to_string())]
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Field name fallback — older opencode payloads used `filePath`; pi used
 // `path` in some cases. Handler tries `file_path`, `filePath`, `path` in
 // order. If any drift, the wrong key gets read and the wrong file gets
