@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="logo/logo.svg" alt="Sidekick" width="320">
-</p>
-
 # Sidekick
 
 **Protects your unsaved Neovim work from Claude Code, Codex, opencode, pi, Crush, Amp, and Antigravity.**
