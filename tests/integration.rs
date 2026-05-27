@@ -342,6 +342,85 @@ fn lowercase_edit_under_claude_shape_engages() {
 }
 
 // ---------------------------------------------------------------------------
+// Amp — the plugin in plugins/amp/sidekick.ts maps edit_file/create_file
+// to Edit/Write before constructing the envelope, so day-to-day Amp
+// traffic is covered by the Claude-shape tests above. These cover the
+// raw lowercase names sidekick normalizes server-side as defense in
+// depth (and as the executable spec for handler.rs::other_tool_mutations).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn amp_edit_file_extracts_file_path() {
+    let json = r#"{
+        "session_id": "thread-1",
+        "transcript_path": "",
+        "cwd": "/p",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "edit_file",
+        "tool_input": { "path": "/p/src/lib.rs" }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("edit".to_string(), "/p/src/lib.rs".to_string())]
+    );
+}
+
+#[test]
+fn amp_create_file_extracts_file_path() {
+    let json = r#"{
+        "session_id": "thread-1",
+        "transcript_path": "",
+        "cwd": "/p",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "create_file",
+        "tool_input": { "file_path": "/p/src/new.rs", "content": "hello" }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("write".to_string(), "/p/src/new.rs".to_string())]
+    );
+}
+
+#[test]
+fn amp_post_tool_use_edit_file_routes_as_post() {
+    let json = r#"{
+        "session_id": "thread-1",
+        "transcript_path": "",
+        "cwd": "/p",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "edit_file",
+        "tool_input": { "path": "/p/src/lib.rs" }
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PostToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("edit".to_string(), "/p/src/lib.rs".to_string())]
+    );
+}
+
+#[test]
+fn amp_unknown_tool_does_not_engage() {
+    // Amp's built-in surface includes Bash, Read, finder, oracle, etc.
+    // (17 tools per `amp tools list`). Only edit_file/create_file mutate
+    // files — everything else must pass through without engaging.
+    let json = r#"{
+        "session_id": "thread-1",
+        "transcript_path": "",
+        "cwd": "/p",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "finder",
+        "tool_input": { "query": "lib.rs" }
+    }"#;
+
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
 // Field name fallback — older opencode payloads used `filePath`; pi used
 // `path` in some cases. Handler tries `file_path`, `filePath`, `path` in
 // order. If any drift, the wrong key gets read and the wrong file gets

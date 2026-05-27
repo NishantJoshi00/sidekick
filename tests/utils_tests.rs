@@ -1,6 +1,6 @@
 //! Unit tests for socket path utilities
 
-use sidekick::utils::{compute_socket_path_with_pid, find_matching_sockets};
+use sidekick::utils::{compute_socket_path_with_pid, find_matching_sockets, find_sockets_for_path};
 
 #[test]
 fn test_compute_socket_path_with_pid() {
@@ -81,6 +81,74 @@ fn test_find_matching_sockets_filters_nonexistent() {
 // Note: Tests that change cwd can interfere with parallel test execution
 // and have been removed. Socket path computation based on cwd is tested
 // indirectly through other tests.
+
+#[test]
+fn find_sockets_for_path_walks_up_to_match_ancestor() {
+    // Regression: Amp's plugin runtime sets process.cwd() to
+    // ~/.config/amp/plugins, so the cwd-based hash never matches the
+    // Neovim socket the user launched from their project. The fallback
+    // walks up from the edited file's absolute path until it finds a
+    // directory whose hash matches an existing socket.
+    use std::fs;
+
+    let tmp = std::env::temp_dir();
+    let unique = format!(
+        "sidekick-walkup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let project_dir = tmp.join(&unique);
+    let nested = project_dir.join("src").join("nested");
+    fs::create_dir_all(&nested).expect("create nested dirs");
+
+    // canonicalize matches what utils does internally
+    let project_canonical = project_dir.canonicalize().expect("canonicalize project");
+    let hash = blake3::hash(project_canonical.to_string_lossy().as_bytes());
+    let socket_path = std::path::PathBuf::from(format!("/tmp/{}-99999.sock", hash.to_hex()));
+    fs::write(&socket_path, "").expect("create fake socket");
+
+    let file = nested.join("handler.rs");
+    let found = find_sockets_for_path(&file).expect("walk up");
+
+    // Cleanup before assertions so a failure doesn't leak the socket
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_dir_all(&project_dir);
+
+    assert_eq!(
+        found,
+        vec![socket_path],
+        "walk-up should find the socket hashed from the project root"
+    );
+}
+
+#[test]
+fn find_sockets_for_path_returns_empty_when_no_ancestor_matches() {
+    use std::fs;
+
+    let tmp = std::env::temp_dir();
+    let unique = format!(
+        "sidekick-walkup-miss-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let project_dir = tmp.join(&unique);
+    fs::create_dir_all(&project_dir).expect("create project");
+    let file = project_dir.join("foo.txt");
+
+    let found = find_sockets_for_path(&file).expect("walk up");
+    let _ = fs::remove_dir_all(&project_dir);
+
+    assert!(
+        found.is_empty(),
+        "no socket exists for any ancestor — walk-up should return empty"
+    );
+}
 
 #[test]
 fn test_socket_path_pattern() {

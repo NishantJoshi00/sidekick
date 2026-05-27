@@ -4,7 +4,7 @@
 
 # Sidekick
 
-**Protects your unsaved Neovim work from Claude Code, Codex, opencode, pi, and Crush.**
+**Protects your unsaved Neovim work from Claude Code, Codex, opencode, pi, Crush, and Amp.**
 
 <p align="center">
   <a href="https://claude.com/claude-code"><img src="https://github.com/anthropics.png?size=160" alt="Claude Code" height="48" width="48"></a>
@@ -16,6 +16,8 @@
   <a href="https://pi.dev"><img src="https://pi.dev/logo-auto.svg" alt="pi" height="48" width="48"></a>
   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://github.com/charmbracelet/crush"><img src="https://github.com/charmbracelet.png?size=160" alt="Crush" height="48" width="48"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://ampcode.com"><img src="https://github.com/sourcegraph.png?size=160" alt="Amp" height="48" width="48"></a>
 </p>
 
 *A conduit between Neovim and your AI agents — so they wait when you're typing.*
@@ -62,6 +64,7 @@ Verify with `sidekick doctor`. Want to wire things by hand? See [docs/SETUP.md](
 | opencode    | ✓         | ✓              | ✓                   |
 | pi          | ✓         | ✓              | ✓                   |
 | Crush       | ✓         | —              | —                   |
+| Amp         | ✓         | ✓              | —                   |
 
 A `—` is an upstream gap: the harness doesn't expose the hook event sidekick would need.
 
@@ -98,11 +101,11 @@ No daemons, no background service. Just one CLI, Neovim RPC sockets in `/tmp`, a
 
 ## Requirements
 
-Neovim with RPC + Lua support, a Unix-like system, and at least one supported AI harness: Claude Code, Codex, opencode, pi, or Crush. Rust/Cargo is required for `cargo install`.
+Neovim with RPC + Lua support, a Unix-like system, and at least one supported AI harness: Claude Code, Codex, opencode, pi, Crush, or Amp. Rust/Cargo is required for `cargo install`.
 
 ## What's next
 
-Sidekick is Phase 1 — Neovim plus Claude Code, Codex, opencode, pi, and Crush. The longer arc is a small protocol any editor can expose and any AI tool can query before writing: *is this file being edited by a human right now?* [PHILOSOPHY.md](PHILOSOPHY.md) has the roadmap (Helix, Zed, VS Code; Aider, Goose, Continue) and the extension points.
+Sidekick is Phase 1 — Neovim plus Claude Code, Codex, opencode, pi, Crush, and Amp. The longer arc is a small protocol any editor can expose and any AI tool can query before writing: *is this file being edited by a human right now?* [PHILOSOPHY.md](PHILOSOPHY.md) has the roadmap (Helix, Zed, VS Code; Aider, Goose, Continue) and the extension points.
 
 ## Contributing
 

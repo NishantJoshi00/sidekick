@@ -29,6 +29,8 @@
 //! ```
 
 use std::io::{self, Read, Write};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use chrono::Utc;
@@ -52,8 +54,13 @@ pub fn handle_hook() -> anyhow::Result<()> {
     // Parse the hook
     let hook = hook::parse_hook(&input)?;
 
-    // Resolve nvim instances once so we know how many we probed.
-    let socket_paths = utils::find_matching_sockets().unwrap_or_default();
+    // Resolve nvim instances. Start with the cwd-based search every
+    // harness has relied on; fall back to walking up from the file path
+    // in the envelope for harnesses whose plugin runtime sandboxes
+    // process.cwd() (Amp), so sidekick can still find the matching
+    // Neovim from any cwd as long as the edited file is inside the
+    // Neovim launch directory.
+    let socket_paths = resolve_socket_paths(&hook);
     let instances_probed = socket_paths.len();
     let nvim_action = if socket_paths.is_empty() {
         None
@@ -280,6 +287,29 @@ fn tool_kind_label(kind: ToolKind) -> &'static str {
     }
 }
 
+fn resolve_socket_paths(hook: &Hook) -> Vec<PathBuf> {
+    let cwd_based = utils::find_matching_sockets().unwrap_or_default();
+    if !cwd_based.is_empty() {
+        return cwd_based;
+    }
+    let tool = match hook {
+        Hook::Claude(ClaudeShape::PreToolUse(h)) => Some(&h.tool),
+        Hook::Claude(ClaudeShape::PostToolUse(h)) => Some(&h.tool),
+        Hook::Crush(CrushShape::PreToolUse(h)) => Some(&h.tool),
+        Hook::Claude(ClaudeShape::UserPromptSubmit(_)) => None,
+    };
+    let Some(tool) = tool else {
+        return Vec::new();
+    };
+    for (_, file_path) in tool_to_mutations(tool) {
+        let sockets = utils::find_sockets_for_path(Path::new(&file_path)).unwrap_or_default();
+        if !sockets.is_empty() {
+            return sockets;
+        }
+    }
+    Vec::new()
+}
+
 fn tool_to_mutations(tool: &Tool) -> Vec<(ToolKind, String)> {
     match tool {
         Tool::Known(KnownTool::Edit(f)) => file_input_mutation(ToolKind::Edit, f),
@@ -309,8 +339,12 @@ fn other_tool_mutations(name: &str, input: &serde_json::Value) -> Vec<(ToolKind,
     }
 
     let tool_kind = match normalized.as_str() {
-        "edit" => ToolKind::Edit,
-        "write" => ToolKind::Write,
+        // Amp's `edit_file` and `create_file` are normalized server-side in
+        // case a raw envelope reaches the handler; the plugin in
+        // `plugins/amp/sidekick.ts` already maps them to Edit/Write before
+        // shelling out, so this is defense in depth.
+        "edit" | "edit_file" => ToolKind::Edit,
+        "write" | "create_file" => ToolKind::Write,
         "multiedit" | "multi_edit" => ToolKind::MultiEdit,
         _ => return Vec::new(),
     };
@@ -470,6 +504,32 @@ mod tests {
         assert_eq!(
             tool_to_mutations(&tool),
             vec![(ToolKind::MultiEdit, "config.toml".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_amp_edit_file_path() {
+        let tool = Tool::Other {
+            tool_name: "edit_file".into(),
+            tool_input: serde_json::json!({ "path": "src/lib.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Edit, "src/lib.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_amp_create_file_path() {
+        let tool = Tool::Other {
+            tool_name: "create_file".into(),
+            tool_input: serde_json::json!({ "file_path": "src/new.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Write, "src/new.rs".into())]
         );
     }
 
