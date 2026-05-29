@@ -602,6 +602,123 @@ fn antigravity_optional_fields_parse() {
 }
 
 // ---------------------------------------------------------------------------
+// Grok — a distinct wire shape, NOT the Claude shape the dossier predicted.
+// Field names are camelCase (`hookEventName`, `sessionId`, `toolName`,
+// `toolInput`); the event tag VALUES are snake_case (`pre_tool_use`,
+// `post_tool_use`, `user_prompt_submit`); tool names are Grok-specific
+// (`search_replace` for edits, `read_file`/`list_dir` for reads). The
+// payloads below are captured verbatim from a real Grok session — they
+// are the regression for the original "exit code 1 on every event" bug,
+// where the Claude parser couldn't deserialize Grok's envelope at all.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn grok_pre_tool_use_search_replace_extracts_file_path() {
+    // Captured: Grok's edit tool is `search_replace`, path key `file_path`.
+    let json = r#"{
+        "hookEventName": "pre_tool_use",
+        "sessionId": "019e732c-dcb4-75f1-a5e6-438466ae59df",
+        "cwd": "/p",
+        "workspaceRoot": "/p/",
+        "timestamp": "2026-05-29T10:00:17.525717+00:00",
+        "toolName": "search_replace",
+        "toolUseId": "call-c6db2a70-0f9a-426d-a15e-95fff914bf65-2",
+        "toolInput": { "file_path": "README.md", "old_string": "a", "new_string": "b" },
+        "toolInputTruncated": false
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("edit".to_string(), "README.md".to_string())]
+    );
+}
+
+#[test]
+fn grok_post_tool_use_search_replace_routes_as_post() {
+    // Captured: PostToolUse adds effectiveToolName, toolResult,
+    // toolResultTruncated, isBackgrounded. The parser must tolerate them
+    // and still extract the path for buffer refresh.
+    let json = r#"{
+        "hookEventName": "post_tool_use",
+        "sessionId": "019e732c-dcb4-75f1-a5e6-438466ae59df",
+        "cwd": "/p",
+        "workspaceRoot": "/p/",
+        "timestamp": "2026-05-29T10:00:17.557401+00:00",
+        "toolName": "search_replace",
+        "effectiveToolName": "search_replace",
+        "toolUseId": "call-c6db2a70-0f9a-426d-a15e-95fff914bf65-2",
+        "toolInput": { "file_path": "README.md", "old_string": "a", "new_string": "b" },
+        "toolResult": { "status": "completed" },
+        "toolInputTruncated": false,
+        "toolResultTruncated": false,
+        "isBackgrounded": false
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PostToolUse");
+    assert_eq!(
+        extract_mutations(json).unwrap(),
+        vec![("edit".to_string(), "README.md".to_string())]
+    );
+}
+
+#[test]
+fn grok_user_prompt_submit_routes_to_prompt_path() {
+    // Captured verbatim — note the prompt is wrapped in <user_query> tags.
+    let json = r#"{
+        "hookEventName": "user_prompt_submit",
+        "sessionId": "019e732c-dcb4-75f1-a5e6-438466ae59df",
+        "cwd": "/p",
+        "workspaceRoot": "/p/",
+        "timestamp": "2026-05-29T10:00:08.937069+00:00",
+        "promptId": "7a49d847-a537-47d0-b4cc-908bb8c88fb6",
+        "prompt": "<user_query>\ncan you add hello world at the top of the README file?\n</user_query>"
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "UserPromptSubmit");
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn grok_pre_tool_use_read_file_does_not_engage() {
+    // Captured: read_file uses `target_file` (not `file_path`) but is a
+    // read tool, so it must not engage regardless of path key.
+    let json = r#"{
+        "hookEventName": "pre_tool_use",
+        "sessionId": "019e732c-dcb4-75f1-a5e6-438466ae59df",
+        "cwd": "/p",
+        "workspaceRoot": "/p/",
+        "timestamp": "2026-05-29T10:00:14.435388+00:00",
+        "toolName": "read_file",
+        "toolUseId": "call-14910aed-50ff-4b71-b2ad-0584376fe31c-1",
+        "toolInput": { "target_file": "README.md", "offset": 1, "limit": 50 },
+        "toolInputTruncated": false
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+#[test]
+fn grok_pre_tool_use_list_dir_does_not_engage() {
+    // Captured: list_dir is a read tool with a `target_directory` key.
+    let json = r#"{
+        "hookEventName": "pre_tool_use",
+        "sessionId": "019e732c-dcb4-75f1-a5e6-438466ae59df",
+        "cwd": "/p",
+        "workspaceRoot": "/p/",
+        "timestamp": "2026-05-29T10:00:11.957249+00:00",
+        "toolName": "list_dir",
+        "toolUseId": "call-90a2b924-cfcd-4b08-8ffe-ecf19ac2855a-0",
+        "toolInput": { "target_directory": "." },
+        "toolInputTruncated": false
+    }"#;
+
+    assert_eq!(classify_event(json).unwrap(), "PreToolUse");
+    assert!(extract_mutations(json).unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
 // Field name fallback — older opencode payloads used `filePath`; pi used
 // `path` in some cases. Handler tries `file_path`, `filePath`, `path` in
 // order. If any drift, the wrong key gets read and the wrong file gets

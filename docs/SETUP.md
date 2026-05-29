@@ -40,6 +40,7 @@ Each harness has its own setup page. They cover what file gets written where, wh
 - [Crush](setup/crush.md)
 - [Amp](setup/amp.md)
 - [Antigravity](setup/antigravity.md)
+- [Grok](setup/grok.md)
 
 ## Verifying
 

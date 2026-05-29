@@ -39,8 +39,12 @@ use anyhow::Context;
 /// `Crush` is Crush's distinct envelope, which uses `event` instead and
 /// omits `transcript_path`. `Antigravity` has no top-level event tag at
 /// all (the event is implicit in the `hooks.json` registration), uses
-/// camelCase fields, and nests the tool call. Untagged matching tries
-/// the more-specific variants (those with a tag field) first.
+/// camelCase fields, and nests the tool call. `Grok` uses camelCase field
+/// names (`hookEventName`, `sessionId`, `toolName`, `toolInput`) with
+/// snake_case event-tag values (`pre_tool_use` / `post_tool_use` /
+/// `user_prompt_submit`). Untagged matching tries the more-specific
+/// variants (those with a distinguishing tag/field set) first; Grok is
+/// last and only matches its own camelCase-tagged envelope.
 #[non_exhaustive]
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
@@ -48,6 +52,7 @@ pub enum Hook {
     Claude(ClaudeShape),
     Crush(CrushShape),
     Antigravity(AntigravityShape),
+    Grok(GrokShape),
 }
 
 /// Claude-shape envelopes — internally tagged on `hook_event_name`.
@@ -152,6 +157,47 @@ pub struct AntigravityPostHook {
 pub struct AntigravityToolCall {
     pub name: String,
     pub args: serde_json::Value,
+}
+
+/// Grok's hook envelopes — internally tagged on `hookEventName` with
+/// snake_case values. Grok emits Pre/Post tool-use and prompt-submit
+/// events, so the capability triple is full (like Claude Code).
+#[non_exhaustive]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "hookEventName")]
+pub enum GrokShape {
+    #[serde(rename = "pre_tool_use")]
+    PreToolUse(GrokToolHook),
+    #[serde(rename = "post_tool_use")]
+    PostToolUse(GrokToolHook),
+    #[serde(rename = "user_prompt_submit")]
+    UserPromptSubmit(GrokUserPromptHook),
+}
+
+/// Body of a Grok pre/post tool-use envelope. `toolName` is Grok's
+/// snake_case tool name (`search_replace` for edits, `write_file` for
+/// writes); `toolInput` carries the arguments (path key is `file_path`).
+/// The many other fields Grok sends — `workspaceRoot`, `timestamp`,
+/// `toolUseId`, `effectiveToolName`, `toolResult`, `toolInputTruncated`,
+/// `isBackgrounded` — are ignored.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrokToolHook {
+    pub session_id: String,
+    pub cwd: String,
+    pub tool_name: String,
+    pub tool_input: serde_json::Value,
+}
+
+/// Body of a Grok user_prompt_submit envelope. No tool payload — this
+/// fires on the user's prompt itself, before a tool is chosen.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrokUserPromptHook {
+    pub session_id: String,
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// Tool types recognised by name. Adjacent tagging matches the wire

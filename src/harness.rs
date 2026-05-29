@@ -20,6 +20,7 @@ pub mod antigravity;
 pub mod claude_code;
 pub mod codex;
 pub mod crush;
+pub mod grok;
 pub mod opencode;
 pub mod pi;
 pub(crate) mod shared;
@@ -39,6 +40,7 @@ pub mod registry {
             Box::new(super::crush::Crush),
             Box::new(super::amp::Amp),
             Box::new(super::antigravity::Antigravity),
+            Box::new(super::grok::Grok),
         ]
     }
 }

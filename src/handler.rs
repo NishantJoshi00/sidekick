@@ -41,20 +41,24 @@ use crate::analytics::{
 };
 use crate::editor::{Editor, neovim::NeovimEditor};
 use crate::hook::{
-    self, AntigravityShape, AntigravityToolHook, ClaudeShape, CrushShape, FileToolInput, Hook,
-    HookOutput, KnownTool, PermissionDecision, Tool,
+    self, AntigravityShape, AntigravityToolHook, ClaudeShape, CrushShape, FileToolInput, GrokShape,
+    GrokToolHook, Hook, HookOutput, KnownTool, PermissionDecision, Tool,
 };
 use crate::utils;
 
 /// Which output envelope the host expects on stdout. Claude-shape hosts
 /// (Claude Code, Codex, opencode, pi, Crush, Amp) read
-/// `hookSpecificOutput.permissionDecision`; Antigravity reads a top-level
-/// `decision` field instead. Emitting the wrong shape means the host
-/// silently treats every gating call as allow.
+/// `hookSpecificOutput.permissionDecision`; Antigravity and Grok read a
+/// top-level `decision` field instead (`{"decision":"deny","reason":...}`).
+/// Emitting the wrong shape means the host silently treats every gating
+/// call as allow — exactly the symptom that surfaced when Grok was first
+/// wired as a Claude-shape host: nvim showed the block message but Grok
+/// proceeded with the edit.
 #[derive(Clone, Copy)]
 enum WireFormat {
     Claude,
     Antigravity,
+    Grok,
 }
 
 pub fn handle_hook() -> anyhow::Result<()> {
@@ -66,6 +70,7 @@ pub fn handle_hook() -> anyhow::Result<()> {
     let hook = hook::parse_hook(&input)?;
     let wire = match &hook {
         Hook::Antigravity(_) => WireFormat::Antigravity,
+        Hook::Grok(_) => WireFormat::Grok,
         _ => WireFormat::Claude,
     };
 
@@ -121,6 +126,29 @@ pub fn handle_hook() -> anyhow::Result<()> {
         }
         Hook::Antigravity(AntigravityShape::PostToolUse(_)) => {
             handle_antigravity_post_tool_use(nvim_action.as_ref())
+        }
+        Hook::Grok(GrokShape::PreToolUse(h)) => {
+            let tool = grok_to_tool(&h);
+            handle_pre_tool_use(
+                &h.session_id,
+                &h.cwd,
+                &tool,
+                nvim_action.as_ref(),
+                instances_probed,
+                wire,
+            )
+        }
+        Hook::Grok(GrokShape::PostToolUse(h)) => {
+            let tool = grok_to_tool(&h);
+            handle_post_tool_use(&h.session_id, &h.cwd, &tool, nvim_action.as_ref())
+        }
+        Hook::Grok(GrokShape::UserPromptSubmit(_)) => {
+            // Grok's UserPromptSubmit is a passive event — its hook stdout
+            // is ignored, so there's no channel to inject the visual
+            // selection (selection_inject is false for Grok). Parse it for
+            // robustness but do no nvim work. The shipped config doesn't
+            // register this event, so this arm is defensive only.
+            HookOutput::new()
         }
     };
 
@@ -281,7 +309,11 @@ fn check_buffer_modifications(
 fn build_allow(wire: WireFormat) -> HookOutput {
     match wire {
         WireFormat::Claude => HookOutput::new(),
-        WireFormat::Antigravity => HookOutput::new().with_top_level_decision("allow", None),
+        // Grok and Antigravity both read a top-level `decision`; Grok's
+        // docs spell allow as `{"decision":"allow"}`.
+        WireFormat::Antigravity | WireFormat::Grok => {
+            HookOutput::new().with_top_level_decision("allow", None)
+        }
     }
 }
 
@@ -293,7 +325,13 @@ fn build_deny(wire: WireFormat, reason: String) -> HookOutput {
         WireFormat::Claude => {
             HookOutput::new().with_permission_decision(PermissionDecision::Deny, Some(reason))
         }
-        WireFormat::Antigravity => HookOutput::new().with_top_level_decision("deny", Some(reason)),
+        // Grok's hook spec: a blocking PreToolUse hook returns a top-level
+        // `{"decision":"deny","reason":"..."}` on stdout (exit 0 is fine).
+        // The nested Claude form is silently ignored, so Grok must use the
+        // same top-level shape as Antigravity.
+        WireFormat::Antigravity | WireFormat::Grok => {
+            HookOutput::new().with_top_level_decision("deny", Some(reason))
+        }
     }
 }
 
@@ -330,8 +368,13 @@ pub fn extract_mutations(input: &str) -> anyhow::Result<Vec<(String, String)>> {
             owned_tool = antigravity_to_tool(h);
             &owned_tool
         }
+        Hook::Grok(GrokShape::PreToolUse(h)) | Hook::Grok(GrokShape::PostToolUse(h)) => {
+            owned_tool = grok_to_tool(h);
+            &owned_tool
+        }
         Hook::Claude(ClaudeShape::UserPromptSubmit(_))
-        | Hook::Antigravity(AntigravityShape::PostToolUse(_)) => return Ok(Vec::new()),
+        | Hook::Antigravity(AntigravityShape::PostToolUse(_))
+        | Hook::Grok(GrokShape::UserPromptSubmit(_)) => return Ok(Vec::new()),
     };
     Ok(tool_to_mutations(tool)
         .into_iter()
@@ -356,6 +399,12 @@ pub fn classify_event(input: &str) -> anyhow::Result<&'static str> {
         // to Pre vs Post.
         Hook::Antigravity(AntigravityShape::PreToolUse(_)) => "PreToolUse",
         Hook::Antigravity(AntigravityShape::PostToolUse(_)) => "PostToolUse",
+        // Grok's event tag is on the wire (`hookEventName`) but the values
+        // are snake_case; classify_event normalizes back to the canonical
+        // PascalCase labels the rest of sidekick uses.
+        Hook::Grok(GrokShape::PreToolUse(_)) => "PreToolUse",
+        Hook::Grok(GrokShape::PostToolUse(_)) => "PostToolUse",
+        Hook::Grok(GrokShape::UserPromptSubmit(_)) => "UserPromptSubmit",
     })
 }
 
@@ -382,8 +431,13 @@ fn resolve_socket_paths(hook: &Hook) -> Vec<PathBuf> {
             owned_tool = antigravity_to_tool(h);
             Some(&owned_tool)
         }
+        Hook::Grok(GrokShape::PreToolUse(h)) | Hook::Grok(GrokShape::PostToolUse(h)) => {
+            owned_tool = grok_to_tool(h);
+            Some(&owned_tool)
+        }
         Hook::Claude(ClaudeShape::UserPromptSubmit(_))
-        | Hook::Antigravity(AntigravityShape::PostToolUse(_)) => None,
+        | Hook::Antigravity(AntigravityShape::PostToolUse(_))
+        | Hook::Grok(GrokShape::UserPromptSubmit(_)) => None,
     };
     let Some(tool) = tool else {
         return Vec::new();
@@ -405,6 +459,19 @@ fn antigravity_to_tool(h: &AntigravityToolHook) -> Tool {
     Tool::Other {
         tool_name: h.tool_call.name.clone(),
         tool_input: h.tool_call.args.clone(),
+    }
+}
+
+/// Lower a Grok tool-use envelope into the generic `Tool::Other` shape.
+/// Grok carries `toolName`/`toolInput` as flat camelCase fields rather
+/// than the adjacently-tagged `tool_name`/`tool_input` the `Tool` enum
+/// deserializes from, so it can't flatten straight into `Tool`; this
+/// hands the name and args to the same normalization path Crush, Codex,
+/// and Antigravity use.
+fn grok_to_tool(h: &GrokToolHook) -> Tool {
+    Tool::Other {
+        tool_name: h.tool_name.clone(),
+        tool_input: h.tool_input.clone(),
     }
 }
 
@@ -440,9 +507,10 @@ fn other_tool_mutations(name: &str, input: &serde_json::Value) -> Vec<(ToolKind,
         // Amp's `edit_file` and `create_file` are normalized server-side in
         // case a raw envelope reaches the handler; the plugin in
         // `plugins/amp/sidekick.ts` already maps them to Edit/Write before
-        // shelling out, so this is defense in depth.
-        "edit" | "edit_file" | "replace_file_content" => ToolKind::Edit,
-        "write" | "create_file" | "write_to_file" => ToolKind::Write,
+        // shelling out, so this is defense in depth. Grok's edit tool is
+        // `search_replace` and its write tool is `write_file`.
+        "edit" | "edit_file" | "replace_file_content" | "search_replace" => ToolKind::Edit,
+        "write" | "create_file" | "write_to_file" | "write_file" => ToolKind::Write,
         "multiedit" | "multi_edit" | "multi_replace_file_content" => ToolKind::MultiEdit,
         _ => return Vec::new(),
     };
@@ -458,7 +526,9 @@ fn pick_file_path(input: &serde_json::Value) -> Option<&str> {
     input.as_object().and_then(|obj| {
         // `TargetFile` is Antigravity's PascalCase key on
         // write_to_file / replace_file_content / multi_replace_file_content.
-        ["file_path", "filePath", "path", "TargetFile"]
+        // `target_file` is Grok's key on some file tools (its edit tool
+        // `search_replace` uses `file_path`, but `write_file` may differ).
+        ["file_path", "filePath", "path", "TargetFile", "target_file"]
             .into_iter()
             .find_map(|key| obj.get(key).and_then(|v| v.as_str()))
     })
@@ -556,6 +626,28 @@ mod tests {
         assert!(json.contains("\"permissionDecision\":\"deny\""));
         assert!(json.contains("\"hookEventName\":\"PreToolUse\""));
         assert!(!json.contains("\"decision\":\"deny\","));
+    }
+
+    #[test]
+    fn grok_deny_output_places_decision_at_top_level() {
+        // Regression: Grok was first wired as a Claude-shape host, which
+        // emits hookSpecificOutput.permissionDecision. Grok reads a
+        // top-level `decision`, so nvim showed the block but Grok proceeded
+        // with the edit. Grok's hook docs spell deny as
+        // `{"decision":"deny","reason":"..."}` on stdout.
+        let output = build_deny(WireFormat::Grok, "blocked".into());
+        let json = output.to_json().unwrap();
+
+        assert!(json.contains("\"decision\":\"deny\""));
+        assert!(json.contains("\"reason\":\"blocked\""));
+        assert!(!json.contains("\"hookSpecificOutput\""));
+    }
+
+    #[test]
+    fn grok_allow_output_explicit_decision() {
+        let output = build_allow(WireFormat::Grok);
+        let json = output.to_json().unwrap();
+        assert!(json.contains("\"decision\":\"allow\""));
     }
 
     #[test]
@@ -713,6 +805,35 @@ mod tests {
         assert_eq!(
             tool_to_mutations(&tool),
             vec![(ToolKind::MultiEdit, "/p/src/lib.rs".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_grok_search_replace_file_path() {
+        // Grok's edit tool. Path key is `file_path`, same as Claude/Crush.
+        let tool = Tool::Other {
+            tool_name: "search_replace".into(),
+            tool_input: serde_json::json!({ "file_path": "README.md" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Edit, "README.md".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_grok_write_file_path() {
+        // Grok's write tool. The `target_file` fallback covers it in case
+        // write_file uses that key like read_file does.
+        let tool = Tool::Other {
+            tool_name: "write_file".into(),
+            tool_input: serde_json::json!({ "target_file": "src/new.rs" }),
+        };
+
+        assert_eq!(
+            tool_to_mutations(&tool),
+            vec![(ToolKind::Write, "src/new.rs".into())]
         );
     }
 
