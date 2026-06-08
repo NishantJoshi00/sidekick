@@ -1,6 +1,8 @@
 # Sidekick
 
-**Protects your unsaved Neovim work from Claude Code, Codex, opencode, pi, Crush, Amp, Antigravity, and Grok.**
+**You still write code by hand. So does Claude Code.**
+
+Same files, same time, nobody typing over anybody. Sidekick keeps Neovim and your agents — Codex, opencode, pi, Crush, Amp, Antigravity, Grok — out of each other's way.
 
 <p align="center">
   <a href="https://claude.com/claude-code"><img src="https://github.com/anthropics.png?size=160" alt="Claude Code" height="48" width="48"></a>
